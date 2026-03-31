@@ -1,6 +1,8 @@
 """Demo de la Clase 1 — Primera llamada real a OpenWeather.
 
 Nota: demo actualizado en Clase 8 — OpenWeatherAdapter reemplaza get_current_weather standalone.
+Nota: demo actualizado — get_current_weather() devuelve WeatherData (Pydantic) desde Clase 9.
+Ver snapshots/clase_01/, clase_02/, clase_03/ para las versiones originales.
 Ver snapshots/clase_01/ para la version original.
 
 Nota: este script usa print() intencionalmente.
@@ -38,8 +40,8 @@ async def main() -> None:
     try:
         adapter = OpenWeatherAdapter()
         weather = await adapter.get_current_weather(CITY, api_key)
-        temp = weather["temperature"]
-        desc = weather["description"]
+        temp = weather.temperature
+        desc = weather.description
         print(f"[INFO] Clima en {CITY}: {temp:.0f}°C, {desc}")
     except Exception as e:
         print(f"[ERROR] No se pudo obtener el clima: {e}")

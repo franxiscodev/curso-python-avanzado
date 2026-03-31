@@ -3,6 +3,8 @@
 Nota: demo actualizado en Clase 5 — get_current_weather y get_route son ahora async.
 Nota: demo actualizado en Clase 8 — OpenWeatherAdapter y OpenRouteAdapter reemplazan
       las funciones standalone. Ver snapshots/clase_02/ para la version original.
+Nota: demo actualizado — get_current_weather() devuelve WeatherData (Pydantic) desde Clase 9.
+Ver snapshots/clase_01/, clase_02/, clase_03/ para las versiones originales.
 
 Nota: este script usa print() intencionalmente.
 Loguru se introduce en la Clase 3 como mejora explícita.
@@ -52,8 +54,8 @@ async def main() -> None:
 
     try:
         weather = await weather_adapter.get_current_weather(CITY, weather_key)
-        temp = weather["temperature"]
-        desc = weather["description"]
+        temp = weather.temperature
+        desc = weather.description
         print(f"[INFO] Clima en {CITY}: {temp:.0f}°C, {desc}")
     except Exception as e:
         print(f"[ERROR] No se pudo obtener el clima: {e}")

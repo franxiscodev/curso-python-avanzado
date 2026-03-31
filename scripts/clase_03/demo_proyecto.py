@@ -3,6 +3,8 @@
 Nota: demo actualizado en Clase 5 — get_current_weather y get_route son ahora async.
 Nota: demo actualizado en Clase 8 — OpenWeatherAdapter y OpenRouteAdapter reemplazan
       las funciones standalone. Ver snapshots/clase_03/ para la version original.
+Nota: demo actualizado — get_current_weather() devuelve WeatherData (Pydantic) desde Clase 9.
+Ver snapshots/clase_01/, clase_02/, clase_03/ para las versiones originales.
 
 Settings se valida al importar config — si falta una key en .env,
 la app lanza ValidationError antes de ejecutar nada.
@@ -45,8 +47,8 @@ async def main() -> None:
     logger.info(
         "Clima en {city}: {temp:.0f}°C, {desc}",
         city=CITY,
-        temp=weather["temperature"],
-        desc=weather["description"],
+        temp=weather.temperature,
+        desc=weather.description,
     )
 
     for profile in ["cycling-regular", "driving-car"]:
