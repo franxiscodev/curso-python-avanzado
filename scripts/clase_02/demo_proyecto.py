@@ -4,6 +4,7 @@ Nota: demo actualizado en Clase 5 — get_current_weather y get_route son ahora 
 Nota: demo actualizado en Clase 8 — OpenWeatherAdapter y OpenRouteAdapter reemplazan
       las funciones standalone. Ver snapshots/clase_02/ para la version original.
 Nota: demo actualizado — get_current_weather() devuelve WeatherData (Pydantic) desde Clase 9.
+Nota: demo actualizado — get_route() devuelve RouteData (Pydantic) desde Clase 9.
 Ver snapshots/clase_01/, clase_02/, clase_03/ para las versiones originales.
 
 Nota: este script usa print() intencionalmente.
@@ -66,8 +67,8 @@ async def main() -> None:
             route = await route_adapter.get_route(ORIGIN, DESTINATION, profile, route_key)
             label = PROFILE_LABELS[profile]
             print(
-                f"[INFO] Ruta encontrada: {route['distance_km']} km, "
-                f"{route['duration_min']} min en {label}"
+                f"[INFO] Ruta encontrada: {route.distance_km} km, "
+                f"{route.duration_min} min en {label}"
             )
         except Exception as e:
             print(f"[ERROR] No se pudo obtener la ruta ({profile}): {e}")

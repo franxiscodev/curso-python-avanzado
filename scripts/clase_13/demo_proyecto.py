@@ -35,7 +35,7 @@ async def verificar_api() -> bool:
         async with httpx.AsyncClient(timeout=3.0) as client:
             response = await client.get(f"{API_URL}/health")
             return response.status_code == 200
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException):
         return False
 
 

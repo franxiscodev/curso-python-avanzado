@@ -4,6 +4,7 @@ Nota: demo actualizado en Clase 5 — get_current_weather y get_route son ahora 
 Nota: demo actualizado en Clase 8 — OpenWeatherAdapter y OpenRouteAdapter reemplazan
       las funciones standalone. Ver snapshots/clase_03/ para la version original.
 Nota: demo actualizado — get_current_weather() devuelve WeatherData (Pydantic) desde Clase 9.
+Nota: demo actualizado — get_route() devuelve RouteData (Pydantic) desde Clase 9.
 Ver snapshots/clase_01/, clase_02/, clase_03/ para las versiones originales.
 
 Settings se valida al importar config — si falta una key en .env,
@@ -56,8 +57,8 @@ async def main() -> None:
         label = PROFILE_LABELS[profile]
         logger.info(
             "Ruta encontrada: {km} km, {min} min en {label}",
-            km=route["distance_km"],
-            min=route["duration_min"],
+            km=route.distance_km,
+            min=route.duration_min,
             label=label,
         )
 
