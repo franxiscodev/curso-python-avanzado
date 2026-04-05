@@ -1,78 +1,61 @@
-"""Concepto 02 — @field_validator: logica de validacion custom.
+"""Pydantic V2 — @field_validator: reglas de negocio por campo.
 
-Cuando los constraints de Field (gt, min_length) no son suficientes,
-@field_validator permite escribir logica arbitraria de validacion.
-Siempre requiere @classmethod en Pydantic V2.
+Demuestra cómo ir más allá de los constraints declarativos de Field()
+cuando la regla de negocio no se puede expresar con ge/le/pattern.
+
+@field_validator recibe el valor ya convertido al tipo declarado (modo "after"
+por defecto) y puede validarlo, rechazarlo o transformarlo.
+
+Conceptos que ilustra:
+- @field_validator + @classmethod (obligatorio en Pydantic V2)
+- Levantar ValueError dentro del validador → Pydantic lo envuelve en ValidationError
+- El validador puede transformar el valor: recibe v, retorna v modificado
+- Dos casos: dato lógico (pasa) y dato físicamente imposible (falla)
 
 Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_09/conceptos/02_field_validators.py
-
-    # Linux
-    uv run scripts/clase_09/conceptos/02_field_validators.py
+    uv run python scripts/clase_09/conceptos/02_field_validators.py
 """
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from loguru import logger
+from pydantic import BaseModel, ValidationError, field_validator
+
+logger.info("--- @field_validator: regla de negocio por campo ---")
 
 
-class Temperatura(BaseModel):
-    ciudad: str
-    valor: float
-    unidad: str = Field(default="celsius")
+class SensorTemperatura(BaseModel):
+    id: int
+    # La lectura en grados Celsius no puede bajar del cero absoluto (-273.15 C).
+    # Esta regla no se puede expresar con Field(ge=...) porque -273.15 no es 0.
+    lectura: float
 
-    @field_validator("ciudad")
+    # @classmethod es OBLIGATORIO en Pydantic V2 (en V1 era opcional).
+    # Sin él, Pydantic V2 lanza un TypeError confuso al definir la clase.
+    @field_validator("lectura")
     @classmethod
-    def ciudad_capitalizada(cls, v: str) -> str:
-        """Normaliza el nombre de la ciudad — siempre Title Case."""
-        return v.strip().title()
-
-    @field_validator("valor")
-    @classmethod
-    def temperatura_realista(cls, v: float) -> float:
-        """Valida rango realista para temperatura terrestre."""
-        if not -89.2 <= v <= 56.7:  # records historicos reales
+    def validar_cero_absoluto(cls, v: float) -> float:
+        # 'v' es el valor ya convertido a float por Pydantic (modo "after").
+        # En este punto es seguro comparar con -273.15.
+        print(f"  Validando lectura: {v}")
+        if v < -273.15:
+            # ValueError dentro del validador → Pydantic lo convierte en ValidationError.
             raise ValueError(
-                f"{v}C esta fuera del rango historico terrestre "
-                f"(-89.2C a 56.7C)"
+                "La temperatura no puede ser inferior al cero absoluto (-273.15 C)"
             )
-        return round(v, 1)
-
-    @field_validator("unidad")
-    @classmethod
-    def unidad_valida(cls, v: str) -> str:
-        validas = {"celsius", "fahrenheit", "kelvin"}
-        v_lower = v.lower()
-        if v_lower not in validas:
-            raise ValueError(f"Unidad '{v}' no valida. Usar: {validas}")
-        return v_lower
+        # Siempre devolver el valor (aquí podríamos transformarlo: round(v, 2), etc.)
+        return v
 
 
-# --- Normalizacion en accion ---
-print("=== Normalizacion automatica ===")
-casos = [
-    ("  valencia  ", 13.5, "Celsius"),    # espacios + mayusc unidad
-    ("MADRID", 25.0, "celsius"),           # ciudad en mayusculas
-    ("buenos aires", -10.0, "CELSIUS"),    # ciudad minusc + unidad mayusc
-]
-for ciudad, temp, unidad in casos:
-    t = Temperatura(ciudad=ciudad, valor=temp, unidad=unidad)
-    print(f"  '{ciudad}' -> '{t.ciudad}' | {temp} -> {t.valor} | '{unidad}' -> '{t.unidad}'")
-
-# --- Fallo esperado ---
-print()
-print("=== Temperatura fuera de rango (Venus: 462C) ===")
+# CASO A: Lectura física válida — el validador la deja pasar
 try:
-    Temperatura(ciudad="Venus", valor=462.0, unidad="celsius")
+    s1 = SensorTemperatura(id=1, lectura=25.5)
+    logger.success(f"Sensor valido creado: {s1}")
 except ValidationError as e:
-    for error in e.errors():
-        print(f"  ValidationError en '{error['loc'][0]}': {error['msg']}")
+    logger.error(e)
 
-# --- Diferencia mode before vs after ---
-print()
-print("=== mode='before' vs mode='after' ===")
-print("  mode='after'  (default): recibe el valor YA parseado por Pydantic")
-print("  mode='before': recibe el valor RAW antes del parseo")
-print()
-print("  Ejemplo: si campo es float y llega '13.5' (str):")
-print("    mode='after'  -> recibe 13.5 (float) — Pydantic ya convirtio")
-print("    mode='before' -> recibe '13.5' (str) — antes de la conversion")
+# CASO B: Lectura físicamente imposible — el validador la rechaza
+print("\n--- Intento con valor por debajo del cero absoluto ---")
+try:
+    SensorTemperatura(id=2, lectura=-300.0)  # -300 < -273.15 → inválido
+except ValidationError as e:
+    # El ValidationError incluye: campo ("lectura"), valor (-300.0) y mensaje del ValueError.
+    print(f"\n--- ValidationError ---\n{e}")

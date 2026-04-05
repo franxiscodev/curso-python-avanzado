@@ -1,27 +1,58 @@
-"""Demo Type Hints — Clase 1, Concepto 4.
+"""
+Type Hints — TypedDict y Literal
+==================================
+Demuestra cómo TypedDict define la forma exacta de un diccionario
+y Literal restringe los valores admitidos a un conjunto fijo.
 
-Muestra la diferencia entre funciones con y sin type hints,
-y por qué Python NO valida tipos en runtime (eso es trabajo de mypy).
+Conceptos que ilustra:
+- TypedDict: contrato de claves y tipos para un dict; el IDE autocompletea las llaves.
+- Literal: estrecha el tipo str a valores concretos; mypy rechaza valores fuera del conjunto.
+- Las anotaciones no validan en runtime — eso es trabajo de Pydantic (Clase 8).
 
-Ejecuta este script con:
-    uv run scripts/clase_01/conceptos/04_type_hints_demo.py
+Ejecutar:
+    uv run python scripts/clase_01/conceptos/04_type_hints_demo.py
 """
 
+from typing import TypedDict, Literal
 
-# Sin type hints — el IDE no sabe qué esperar ni qué devuelve
-def greet_untyped(name):
-    return f"Hola {name}"
-
-
-# Con type hints — el IDE autocompleta y mypy detecta errores
-def greet(name: str) -> str:
-    return f"Hola {name}"
+# 1. Definimos la "forma" exacta del diccionario que esperamos procesar
 
 
-# Python no valida en runtime — esto no lanza error:
-result = greet(42)  # type: ignore
-print(result)       # "Hola 42" — Python lo acepta igual
+class CommuteRoute(TypedDict):
+    origin: str
+    destination: str
+    distance_km: float
+    # Literal fuerza a que el valor deba ser EXACTAMENTE uno de estos strings
+    transport_mode: Literal["driving", "walking", "transit"]
 
-print()
-print("Type hints son para el IDE y mypy, no para Python en runtime.")
-print("Para validación en runtime se usa Pydantic (Clase 8).")
+
+def analyze_route(route: CommuteRoute) -> str:
+    # 2. El IDE ahora autocompleta las llaves.
+    # Si escribimos route["distancia"], Mypy lanzará un error crítico.
+    mode = route["transport_mode"]
+
+    # 3. El IDE sabe que 'mode' no es un string cualquiera, es uno de los 3 literales.
+    if mode == "walking" and route["distance_km"] > 5.0:
+        return f"Caminar de {route['origin']} a {route['destination']} tomará demasiado."
+
+    return f"Ruta viable usando {mode}."
+
+
+if __name__ == "__main__":
+    # 4. Diccionario válido que cumple el contrato
+    valid_route: CommuteRoute = {
+        "origin": "Casa",
+        "destination": "Oficina",
+        "distance_km": 2.5,
+        "transport_mode": "walking"
+    }
+
+    print(analyze_route(valid_route))
+
+    # --- DESCOMENTA ESTO PARA VER CÓMO MYPY EXPLOTA ---
+    # invalid_route: CommuteRoute = {
+    #     "origin": "Centro",
+    #     "distance_km": 10,
+    #     "transport_mode": "flying" # 'flying' no está en el Literal. Falta 'destination'.
+    # }
+    # print(analyze_route(invalid_route))

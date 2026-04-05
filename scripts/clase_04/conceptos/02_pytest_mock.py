@@ -1,95 +1,90 @@
-"""Mocks: aislar el sistema bajo test con unittest.mock.
+"""Mocks con pytest-mock: aislar dependencias externas de red.
 
-Demuestra el problema que resuelven los mocks (llamadas externas en tests)
-y como usar MagicMock para reemplazar dependencias externas.
+Demuestra mocker.patch para reemplazar httpx.get por un doble controlado:
+- Happy path: la API responde OK -> se retorna el status directamente
+- Sad path 1: timeout de red -> fallback gracil "UNKNOWN_TIMEOUT"
+- Sad path 2: HTTP 500 -> se traduce a TrafficAPIError (excepcion de dominio)
 
-Ejecutar:
-    uv run scripts/clase_04/conceptos/02_pytest_mock.py
+mocker.patch("httpx.get") reemplaza el objeto en el namespace del modulo bajo test.
+side_effect fuerza que el mock lance una excepcion en lugar de retornar un valor.
+assert_called_once_with() verifica URL y timeout — no solo que se llamo.
+
+Ejecutar (desde curso/):
+    uv run pytest scripts/clase_04/conceptos/02_pytest_mock.py -v
 """
 
-from unittest.mock import MagicMock, call
+import httpx
+import pytest
 
-# --- El problema: dependencias externas en tests ---
-
-print("=== Sin mock: el test depende de una conexion real ===")
-print()
+# --- 1. EXCEPCIÓN DE NUESTRO DOMINIO ---
 
 
-def obtener_temperatura(url: str) -> float:
-    """Simula una llamada HTTP real — falla sin conexion."""
-    raise ConnectionError("Sin conexion en este demo")
+class TrafficAPIError(Exception):
+    """Excepción personalizada para aislar a nuestra app de los errores de httpx."""
+    pass
+
+# --- 2. NUESTRA LÓGICA DE NEGOCIO (El Adaptador) ---
 
 
-try:
-    temp = obtener_temperatura("https://api.openweathermap.org/...")
-except ConnectionError as e:
-    print(f"  El test fallaria con: {e}")
+def get_traffic_status(city: str) -> str:
+    try:
+        # Siempre configuramos timeout en el mundo real
+        response = httpx.get(f"https://api.traffic.com/v1/{city}", timeout=2.0)
 
-print()
+        # Si el status code es 4xx o 5xx, lanza httpx.HTTPStatusError
+        response.raise_for_status()
 
-# --- MagicMock: reemplazar la dependencia ---
+        return response.json()["status"]
 
-print("=== Con MagicMock: el test no depende de nada externo ===")
-print()
+    except httpx.TimeoutException:
+        # SAD PATH 1: Fallback grácil. Si hay timeout, asumimos tráfico desconocido
+        return "UNKNOWN_TIMEOUT"
 
-# Crear un mock que simula la funcion
-mock_obtener = MagicMock(return_value=24.12)
+    except httpx.HTTPStatusError as e:
+        # SAD PATH 2: Explosión controlada. Traducimos el error de librería a nuestro dominio
+        raise TrafficAPIError(
+            f"Fallo en la API de tráfico: HTTP {e.response.status_code}")
 
-# Llamar al mock como si fuera la funcion real
-temperatura = mock_obtener("https://api.openweathermap.org/...")
-print(f"  Temperatura obtenida: {temperatura}")
+# --- 3. NUESTROS TESTS ---
 
-# El mock registra como fue llamado
-print(f"  Fue llamado con: {mock_obtener.call_args}")
-print(f"  Veces llamado: {mock_obtener.call_count}")
 
-print()
+def test_traffic_status_happy_path(mocker):
+    """Prueba que el adaptador funciona cuando la red va bien."""
+    mock_get = mocker.patch("httpx.get")
+    mock_get.return_value.json.return_value = {"status": "Clear"}
+    # raise_for_status no debe hacer nada en el happy path
+    mock_get.return_value.raise_for_status.return_value = None
 
-# --- return_value vs side_effect ---
+    assert get_traffic_status("Madrid") == "Clear"
 
-print("=== return_value vs side_effect ===")
-print()
 
-# return_value: siempre devuelve el mismo valor
-mock_exito = MagicMock(return_value={"temp": 24.12, "desc": "despejado"})
-print(f"  return_value: {mock_exito()}")
-print(f"  return_value: {mock_exito()}")  # mismo resultado siempre
+def test_traffic_status_handles_timeout(mocker):
+    """Prueba el SAD PATH 1: La red se queda colgada."""
+    mock_get = mocker.patch("httpx.get")
 
-print()
+    # side_effect = una excepcion: el mock lanza en lugar de retornar
+    mock_get.side_effect = httpx.TimeoutException("Read timeout on socket")
 
-# side_effect con lista: devuelve cada elemento en orden
-mock_secuencia = MagicMock(side_effect=[
-    {"temp": 24.12},
-    {"temp": 18.5},
-    ConnectionError("fallo de red"),
-])
-print(f"  side_effect[0]: {mock_secuencia()}")
-print(f"  side_effect[1]: {mock_secuencia()}")
-try:
-    mock_secuencia()
-except ConnectionError as e:
-    print(f"  side_effect[2]: lanza {type(e).__name__}: {e}")
+    resultado = get_traffic_status("Barcelona")
 
-print()
+    assert resultado == "UNKNOWN_TIMEOUT"
+    # Verificamos URL y timeout — si el timeout cambia en produccion, este test lo detecta
+    mock_get.assert_called_once_with(
+        "https://api.traffic.com/v1/Barcelona", timeout=2.0)
 
-# --- Verificar llamadas al mock ---
 
-print("=== Verificar como fue llamado el mock ===")
-print()
+def test_traffic_status_explodes_on_500_error(mocker):
+    """Prueba el SAD PATH 2: La API devuelve un 500 Internal Server Error."""
+    mock_get = mocker.patch("httpx.get")
 
-mock_cliente = MagicMock()
-mock_cliente.get("https://api.ejemplo.com", params={"q": "Valencia"})
-mock_cliente.get("https://api.ejemplo.com", params={"q": "Madrid"})
+    mock_response = mocker.MagicMock()
+    mock_response.status_code = 500
 
-print(f"  call_count: {mock_cliente.get.call_count}")
-print(f"  call_args_list:")
-for c in mock_cliente.get.call_args_list:
-    print(f"    {c}")
+    # HTTPStatusError requiere request y response — MagicMock basta para ambos
+    mock_get.side_effect = httpx.HTTPStatusError(
+        "Server Error", request=mocker.MagicMock(), response=mock_response
+    )
 
-# Verificaciones tipicas en tests:
-mock_cliente.get.assert_called()              # fue llamado al menos una vez
-mock_cliente.get.assert_called_with(          # ultima llamada con estos args
-    "https://api.ejemplo.com", params={"q": "Madrid"}
-)
-print()
-print("  assert_called() y assert_called_with() no lanzan error: OK")
+    # El test verifica que lanza NUESTRA excepcion de dominio, no la de httpx
+    with pytest.raises(TrafficAPIError, match="Fallo en la API de tráfico: HTTP 500"):
+        get_traffic_status("Valencia")

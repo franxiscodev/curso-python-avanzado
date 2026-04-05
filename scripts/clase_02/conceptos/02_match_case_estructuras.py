@@ -1,33 +1,37 @@
-"""Demo match/case sobre dicts y listas — Clase 2, Concepto 2.
+"""match/case sobre estructuras: mapping patterns y secuencias anidadas.
 
-El caso más útil para parsear respuestas de APIs:
-extrae valores de estructuras anidadas en un solo paso.
+Demuestra patrones sobre dicts reales (formato webhook de GitHub-like):
+- Mapping pattern con captura: {"autor": user} extrae el valor de "autor" en user
+- Secuencia dentro de mapping: {"archivos": [primer_archivo, *_]} captura
+  el primer elemento de la lista e ignora el resto con *_
+- Patrón parcial: solo se verifican las claves declaradas; claves extra se ignoran
+- Wildcard de dict: {"evento": evento_desconocido} captura cualquier valor de "evento"
 
-Ejecuta este script con:
-    uv run scripts/clase_02/conceptos/02_match_case_estructuras.py
+Los tres payloads del script ejercitan tres ramas distintas del match.
+
+Ejecutar (desde curso/):
+    uv run python scripts/clase_02/conceptos/02_match_case_estructuras.py
 """
 
 
-def procesar_respuesta(data: dict) -> str:
-    match data:
-        # Patrón de mapping: extrae "value" solo si "status" es "ok"
-        case {"status": "ok", "value": v}:
-            return f"Valor recibido: {v}"
-        # Patrón de mapping: extrae "message" cuando hay error
-        case {"status": "error", "message": msg}:
-            return f"Error: {msg}"
-        # Patrón de secuencia: extrae primer elemento y cuenta el resto
-        case {"items": [first, *rest]}:
-            return f"Lista: primero={first}, resto={len(rest)} items"
+def parsear_webhook(payload: dict) -> str:
+    match payload:
+        case {"evento": "commit", "autor": user, "archivos": [primer_archivo, *_]}:
+            return f"El usuario {user} subió código tocando {primer_archivo} y más."
+        case {"evento": "issue", "accion": "abierto", "id": issue_id}:
+            return f"Nuevo ticket abierto con ID: {issue_id}"
+        case {"evento": evento_desconocido}:
+            return f"Evento sin soporte: {evento_desconocido}"
         case _:
-            return f"Estructura desconocida: {data}"
+            return "Payload inválido. Faltan claves estructurales."
 
 
-casos = [
-    {"status": "ok", "value": 42},
-    {"status": "error", "message": "timeout"},
-    {"items": [1, 2, 3, 4]},
-    {"otra": "cosa"},
+payloads = [
+    {"evento": "commit", "autor": "DevOps", "archivos": [
+        "main.py", "test.py"], "hash": "a1b2"},
+    {"evento": "issue", "accion": "abierto", "id": 994},
+    {"evento": "ping", "timestamp": 123456}
 ]
-for caso in casos:
-    print(procesar_respuesta(caso))
+
+for p in payloads:
+    print(parsear_webhook(p))

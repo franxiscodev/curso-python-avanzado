@@ -1,53 +1,59 @@
-"""cProfile básico — medir antes de optimizar.
+"""
+cProfile — Medir antes de optimizar
+=====================================
+Demuestra cómo usar cProfile para identificar qué funciones consumen
+más tiempo en un programa. Caso real: validación masiva de usuarios
+con Pydantic, un patrón típico en adaptadores de PyCommute.
 
-Demuestra cómo usar cProfile para identificar qué funciones
-consumen más tiempo en un programa. Sin imports de pycommute.
+Conceptos que ilustra:
+- cProfile.Profile(): profiler determinístico que instrumenta cada llamada.
+- pstats.sort_stats('tottime'): ordena por tiempo propio de la función,
+  sin contar el tiempo de sus subcalls. Identifica el cuello de botella real.
+- stats.print_stats(5): muestra solo el Top 5 de funciones más costosas.
+
+Requiere: email-validator (uv add --dev email-validator)
 
 Ejecutar:
-    uv run scripts/clase_06/conceptos/01_cprofile_basico.py
+    uv run python scripts/clase_06/conceptos/01_cprofile_basico.py
 """
-
-import cProfile
-import io
 import pstats
-import time
+from pydantic import BaseModel, EmailStr
+import cProfile
+
+# 1. Definimos nuestro modelo de contrato (Capa de Dominio)
 
 
-def operacion_lenta() -> list[int]:
-    """Simula una operación costosa (I/O, base de datos, API)."""
-    time.sleep(0.1)
-    return list(range(1000))
+class CommuteUser(BaseModel):
+    id: int
+    name: str
+    email: EmailStr
 
 
-def operacion_rapida() -> int:
-    """Simula una operación ligera."""
-    return sum(range(100))
+def procesar_usuarios_legacy(datos_crudos: list[dict]):
+    """Simula un adaptador ineficiente que procesa una lista enorme."""
+    usuarios_validos = []
+    for raw in datos_crudos:
+        # El cuello de botella: Instanciar y validar Pydantic miles de veces en un loop
+        user = CommuteUser(**raw)
+        usuarios_validos.append(user)
+    return usuarios_validos
 
 
-def programa_completo() -> dict:
-    """Combina ambas operaciones."""
-    datos = operacion_lenta()
-    total = operacion_rapida()
-    return {"datos": len(datos), "total": total}
+def main():
+    # Generamos 50,000 registros falsos
+    payload_masivo = [
+        {"id": i, "name": f"User {i}", "email": f"user{i}@pycommute.com"}
+        for i in range(50_000)
+    ]
+    procesar_usuarios_legacy(payload_masivo)
 
 
-# ── Perfilar con cProfile ────────────────────────────────────────
-profiler = cProfile.Profile()
-profiler.enable()
-resultado = programa_completo()
-profiler.disable()
+if __name__ == "__main__":
+    profiler = cProfile.Profile()
+    profiler.enable()
+    main()
+    profiler.disable()
 
-# ── Mostrar resultados ordenados por tiempo acumulado ────────────
-stream = io.StringIO()
-stats = pstats.Stats(profiler, stream=stream)
-stats.sort_stats("cumulative")  # cumtime: tiempo total incluyendo llamadas internas
-stats.print_stats(5)            # top 5 funciones más lentas
-
-print(stream.getvalue())
-print(f"Resultado: {resultado}")
-print()
-print("Columnas del informe:")
-print("  ncalls    — número de llamadas")
-print("  tottime   — tiempo en la función (sin contar subcalls)")
-print("  cumtime   — tiempo acumulado (función + todas las que llama)")
-print("  filename  — archivo:línea(función)")
+    # Ordenamos por el tiempo acumulado (tottime) para ver qué función duele más
+    stats = pstats.Stats(profiler).sort_stats('tottime')
+    stats.print_stats(5)  # Mostramos solo el Top 5

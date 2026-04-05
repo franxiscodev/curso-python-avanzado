@@ -1,84 +1,50 @@
-"""Patron Depends() — inyeccion de dependencias en FastAPI.
+"""
+Concepto 2: Inyección de dependencias con FastAPI Depends.
 
-Demuestra:
-- La diferencia entre sin cache y con lru_cache
-- Por que lru_cache convierte get_*() en un singleton
-- Como dependency_overrides permite reemplazar dependencias en tests
+FastAPI resuelve dependencias automáticamente antes de llamar al endpoint:
+- get_commute_service() es la fábrica — crea el servicio con sus propias deps.
+- Depends(get_commute_service) le dice a FastAPI que llame a esa fábrica.
+- Annotated[CommuteService, Depends(...)] es la forma moderna (PEP 593):
+  un alias de tipo que incluye el metadato de inyección.
 
-No ejecuta FastAPI — todo simulado con Python puro.
+Beneficios sobre instanciar en el endpoint:
+- Testeable: dependency_overrides en tests sin tocar el endpoint.
+- Reutilizable: la misma dep en múltiples endpoints.
+- Ciclo de vida controlado: la fábrica puede usar yield para cleanup.
+
+El endpoint solo orquesta — no crea, no calcula, no importa la clase.
 
 Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_12/conceptos/02_depends_pattern.py
-
-    # Linux
-    uv run scripts/clase_12/conceptos/02_depends_pattern.py
+  uv run uvicorn scripts.clase_12.conceptos.02_depends_pattern:app --reload
+  curl "http://localhost:8000/api/v1/eta?origin=Valencia&destination=Madrid"
 """
 
-from functools import lru_cache
+from typing import Annotated
+
+from fastapi import Depends, FastAPI
+
+app = FastAPI()
 
 
-# ── Simulacion de una dependencia "pesada" ────────────────────────────
-class ServicioExterno:
-    """Simula un servicio caro de crear (DB connection, API client, etc.)."""
-
-    _contador = 0
-
-    def __init__(self, nombre: str) -> None:
-        ServicioExterno._contador += 1
-        self.nombre = nombre
-        self.instancia_num = ServicioExterno._contador
-        print(f"  [{self.instancia_num}] Creando {nombre} (costo: inicializacion)")
-
-    def procesar(self, dato: str) -> str:
-        return f"{self.nombre}[{self.instancia_num}] procesó: {dato}"
+# 1. Simulación de nuestro Dominio (Capa Interna)
+class CommuteService:
+    def calculate_eta(self, origin: str, dest: str) -> int:
+        return 42  # Lógica compleja aislada aquí
 
 
-# ── Sin cache — se crea en cada "request" ────────────────────────────
-def get_servicio_sin_cache() -> ServicioExterno:
-    return ServicioExterno("ServicioSinCache")
+# 2. El proveedor de la dependencia (Fábrica)
+def get_commute_service() -> CommuteService:
+    # Aquí podríamos inyectar la DB o la API Key al servicio
+    return CommuteService()
 
 
-# ── Con lru_cache — se crea solo una vez ─────────────────────────────
-@lru_cache
-def get_servicio_con_cache() -> ServicioExterno:
-    return ServicioExterno("ServicioConCache")
+# 3. Contrato de Tipo para FastAPI
+ServiceDep = Annotated[CommuteService, Depends(get_commute_service)]
 
 
-print("=== Sin lru_cache: 3 'requests' = 3 instancias ===")
-for i in range(1, 4):
-    servicio = get_servicio_sin_cache()
-    resultado = servicio.procesar(f"request {i}")
-    print(f"  Request {i}: id={id(servicio)} -> {resultado}")
-
-print("\n=== Con lru_cache: 3 'requests' = 1 instancia ===")
-for i in range(1, 4):
-    servicio = get_servicio_con_cache()
-    resultado = servicio.procesar(f"request {i}")
-    print(f"  Request {i}: id={id(servicio)} -> {resultado}")
-
-print("\n=== En FastAPI con Depends() ===")
-print("""
-  # Sin cache — nueva instancia por request:
-  @router.get("/items")
-  async def items(svc = Depends(get_servicio_sin_cache)):
-      return svc.procesar("datos")
-
-  # Con cache — singleton compartido entre todos los requests:
-  @router.get("/items")
-  async def items(svc = Depends(get_servicio_con_cache)):
-      return svc.procesar("datos")
-""")
-
-print("=== dependency_overrides en tests ===")
-print("""
-  # En tests, reemplazar la dependencia real por un mock:
-  def mock_servicio():
-      svc = MagicMock()
-      svc.procesar.return_value = "respuesta simulada"
-      return svc
-
-  app.dependency_overrides[get_servicio_con_cache] = mock_servicio
-  # Ahora todos los endpoints que usen Depends(get_servicio_con_cache)
-  # reciben el mock — sin patchear modulos, sin imports complicados.
-""")
+# 4. El Endpoint (Capa HTTP)
+@app.get("/api/v1/eta")
+def get_eta(origin: str, destination: str, service: ServiceDep):
+    # El endpoint solo orquesta, no calcula nada.
+    eta = service.calculate_eta(origin, destination)
+    return {"origin": origin, "destination": destination, "eta_minutes": eta}

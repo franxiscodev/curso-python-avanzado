@@ -53,7 +53,7 @@ def dividir(a: float, b: float) -> float:
 #   }
 # Luego escribe un test `test_datos_clima_tiene_ciudad` que use la fixture
 # y verifique que datos_clima["ciudad"] == "Valencia".
-# Pista: repasa "Fixtures" en 01_conceptos.md
+# Pista: repasa la sección 2 (Fixtures con pytest) en 01_conceptos.md
 
 # --- escribe aquí la fixture y el test ---
 
@@ -68,7 +68,7 @@ def dividir(a: float, b: float) -> float:
 #   (precio=100.0, porcentaje=10.0, esperado=90.0)
 #   (precio=50.0,  porcentaje=50.0, esperado=25.0)
 #   (precio=200.0, porcentaje=0.0,  esperado=200.0)
-# Pista: repasa "pytest.mark.parametrize" en 01_conceptos.md
+# Pista: repasa la sección 4 (@pytest.mark.parametrize) en 01_conceptos.md
 
 # --- escribe aquí el test parametrizado ---
 
@@ -85,7 +85,7 @@ def dividir(a: float, b: float) -> float:
 #   4. Verifica que el resultado es 18.0
 #   5. Verifica que cliente_falso.get fue llamado con "Madrid"
 # No uses mocker.patch — aquí bastará con MagicMock directamente.
-# Pista: repasa "Mocks y MagicMock" en 01_conceptos.md
+# Pista: repasa la sección 3 (Mocks con pytest-mock) en 01_conceptos.md
 
 # --- escribe aquí el test con mock ---
 
@@ -100,6 +100,6 @@ def dividir(a: float, b: float) -> float:
 #      y que el mensaje contiene "cero"
 #   b) `test_descuento_invalido` — verifica que calcular_descuento(100, -5) lanza
 #      ValueError y que el mensaje contiene "inválido"
-# Pista: repasa "pytest.raises y verificación de excepciones" en 01_conceptos.md
+# Pista: repasa la sección 2 (Fixtures con pytest) — el bloque pytest.raises en 01_conceptos.md
 
 # --- escribe aquí los dos tests de excepciones ---

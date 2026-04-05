@@ -18,412 +18,320 @@ se detectan en segundos, no en días.
 
 ### CI/CD: tests que se ejecutan en cada push
 
-En un flujo de integración continua (CI/CD), los tests corren automáticamente en cada
-push al repositorio. Si algo se rompe, el pipeline falla antes de que el código llegue
-a producción. Esta práctica convierte los tests en una red de seguridad que trabaja
-por ti.
+En un flujo de integración continua, los tests corren automáticamente en cada push.
+Si algo se rompe, el pipeline falla antes de que el código llegue a producción.
 
-### Velocidad: tests con llamadas reales vs mocks
+### Velocidad: unitarios vs integración
 
-Un test que llama a una API externa puede tardar 2-3 segundos. Si tienes 200 tests así,
-tu suite tarda 6-10 minutos. Los mocks (dobles de prueba) reemplazan esas llamadas por
-respuestas instantáneas: los mismos 200 tests corren en menos de un segundo.
+Un test que llama a una API real puede tardar 2-3 segundos. Con mocks, la misma
+lógica se verifica en milisegundos:
 
-La regla es simple:
-- Tests **unitarios**: sin red, sin disco, sin base de datos. Rápidos y deterministas.
-- Tests **de integración**: con dependencias reales. Lentos, pero necesarios para
-  verificar que las piezas encajan.
+- Tests **unitarios**: sin red, sin disco. Rápidos y deterministas. Usan mocks.
+- Tests **de integración**: con dependencias reales. Lentos, pero verifican que las
+  piezas encajan.
 
-▶ Ejecuta el ejemplo:
-  uv run scripts/clase_04/conceptos/01_pytest_basico.py
+En esta clase nos centramos en los unitarios. La sección siguiente muestra el patrón
+fundamental: fixtures para organizar escenarios, mocks para aislar dependencias.
 
 ---
 
-## 2. pytest — estructura básica
+## 2. Fixtures con pytest
 
-### Convenciones de nombres
+### Qué es una fixture
 
-pytest descubre los tests automáticamente siguiendo estas reglas:
-
-- Los archivos deben llamarse `test_*.py` o `*_test.py`
-- Las funciones deben empezar con `test_`
-- Las clases (opcionales) deben empezar con `Test`
+Una fixture es una función decorada con `@pytest.fixture` que proporciona estado
+a los tests. pytest la inyecta por nombre — no hace falta importarla ni instanciarla.
 
 ```python
-# test_calculadora.py
-
-def test_suma_dos_enteros():
-    assert 2 + 3 == 5
-
-def test_division_entre_cero():
-    import pytest
-    with pytest.raises(ZeroDivisionError):
-        1 / 0
-```
-
-### assert nativo — sin self.assertEqual
-
-A diferencia de `unittest`, pytest usa el `assert` nativo de Python. Cuando un assert
-falla, pytest reescribe el AST (árbol sintáctico abstracto) de la expresión para
-mostrar exactamente qué valor tenía cada lado:
-
-```
-AssertionError: assert 4 == 5
-  where 4 = suma(2, 2)
-```
-
-No necesitas `assertEqual`, `assertIn`, `assertIsNone`... Solo `assert`.
-
-### conftest.py — fixtures compartidas
-
-`conftest.py` es un archivo especial que pytest carga automáticamente. Las fixtures
-definidas ahí están disponibles para todos los tests en el mismo directorio y
-subdirectorios, sin necesidad de importarlas.
-
-```python
-# conftest.py
 import pytest
 
 @pytest.fixture
-def usuario_ejemplo():
-    return {"nombre": "Ana", "edad": 30}
+def perfil_usuario() -> dict:
+    return {"nombre": "Ana", "has_car": False, "ciudad": "Valencia"}
+
+def test_perfil_tiene_nombre(perfil_usuario: dict):
+    assert perfil_usuario["nombre"] == "Ana"
 ```
 
-```python
-# test_usuario.py
-def test_nombre_usuario(usuario_ejemplo):
-    assert usuario_ejemplo["nombre"] == "Ana"
-```
+pytest detecta que `test_perfil_tiene_nombre` necesita `perfil_usuario` (por el
+nombre del parámetro), ejecuta la fixture, y pasa el resultado al test.
 
-### Ciclo de vida de una fixture: setup → test → teardown
+### Organizar escenarios: happy path y sad path
 
-Con `yield`, una fixture puede ejecutar código antes y después del test:
+El poder de las fixtures no está en una sola función — está en tener fixtures
+para cada escenario relevante:
 
 ```python
 @pytest.fixture
-def conexion_temporal():
-    # setup: se ejecuta antes del test
-    conn = crear_conexion()
-    yield conn
-    # teardown: se ejecuta siempre, aunque el test falle
-    conn.cerrar()
+def ruta_valida() -> dict:
+    return {"origen": "Madrid", "destino": "Valencia", "distancia_km": 350}
+
+@pytest.fixture
+def ruta_sin_destino() -> dict:
+    return {"origen": "Madrid", "distancia_km": 350}  # campo faltante
 ```
 
-### Scope de fixtures
+Cada fixture tiene un nombre que describe el estado que representa. Los tests
+los consumen directamente y son legibles sin contexto adicional.
 
-El parámetro `scope` controla cuántas veces se instancia la fixture:
+### pytest.raises para verificar excepciones
 
-| Scope      | Se ejecuta una vez por... |
-|------------|---------------------------|
-| `function` | test (default)            |
-| `class`    | clase de tests            |
-| `module`   | archivo                   |
-| `session`  | ejecución completa        |
+`pytest.raises(TipoExcepcion, match="regex")` verifica dos cosas a la vez:
+que se lanzó la excepción correcta Y que el mensaje contiene el patrón indicado.
 
 ```python
-@pytest.fixture(scope="module")
-def cliente_compartido():
-    return CrearCliente()
+def test_ruta_sin_destino_lanza_error(ruta_sin_destino: dict):
+    with pytest.raises(ValueError, match="campo faltante"):
+        validate_route_payload(ruta_sin_destino)
 ```
 
-▶ Ejecuta el ejemplo:
-  uv run scripts/clase_04/conceptos/01_pytest_basico.py
+Si la función no lanza nada, el test falla. Si lanza ValueError con un mensaje
+distinto, también falla. Ambos contratos verificados en una línea.
 
 ---
 
-## 3. Mocks — aislar el sistema bajo test
-
-### ¿Qué es un mock?
-
-Un mock es un objeto que reemplaza una dependencia externa por un doble controlado.
-En lugar de llamar a una API real, abrir un archivo, o consultar una base de datos,
-el mock devuelve exactamente lo que tú le indicas.
-
-El objetivo es aislar la unidad que estás probando: quieres verificar **tu código**,
-no el comportamiento de servicios externos.
-
-### ¿Cuándo usar mocks?
-
-- Llamadas HTTP a APIs externas
-- Consultas a bases de datos
-- Operaciones de sistema de archivos
-- Funciones que dependen del tiempo (`datetime.now()`)
-- Cualquier dependencia que sea lenta, no determinista, o con estado compartido
-
-### MagicMock: return_value y side_effect
-
-`MagicMock` es la clase principal de `unittest.mock`. Acepta cualquier atributo y
-llamada sin error, a menos que le indiques lo contrario.
-
-**`return_value`** — lo que retorna cuando se llama a la función:
-
-```python
-from unittest.mock import MagicMock
-
-obtener_precio = MagicMock(return_value=42.5)
-resultado = obtener_precio("BTC")
-assert resultado == 42.5
-```
-
-**`side_effect`** — puede ser una excepción, un iterable de valores, o una función:
-
-```python
-# Lanzar una excepción
-obtener_precio.side_effect = ConnectionError("sin red")
-
-# Retornar valores distintos en llamadas sucesivas
-obtener_precio.side_effect = [10.0, 20.0, 30.0]
-
-# Usar una función como reemplazo
-obtener_precio.side_effect = lambda simbolo: simbolo.upper()
-```
-
-`side_effect` tiene precedencia sobre `return_value`.
-
-### Verificar comportamiento: call_count y assert_called_with
-
-Los mocks registran cómo fueron llamados:
-
-```python
-mock_fn = MagicMock(return_value="ok")
-mock_fn("hola", clave="valor")
-
-assert mock_fn.call_count == 1
-mock_fn.assert_called_once_with("hola", clave="valor")
-mock_fn.assert_called_with("hola", clave="valor")  # solo verifica la última llamada
-```
-
-Métodos útiles:
-
-| Método | Qué verifica |
-|--------|-------------|
-| `assert_called_once()` | Se llamó exactamente una vez |
-| `assert_called_once_with(...)` | Una vez, con estos argumentos |
-| `assert_called_with(...)` | La última llamada tuvo estos argumentos |
-| `assert_not_called()` | No se llamó ninguna vez |
-| `call_count` | Número total de llamadas |
-
 ▶ Ejecuta el ejemplo:
-  uv run scripts/clase_04/conceptos/02_mocks.py
+  uv run pytest scripts/clase_04/conceptos/01_pytest_fixtures.py -v
 
 ---
 
-## 4. pytest-mock — mocker.patch()
+### Análisis de 01_pytest_fixtures.py
 
-### Por qué pytest-mock en lugar de unittest.mock directamente
+El script valida un diccionario de ruta con `validate_route_payload()` usando
+tres fixtures y tres tests.
 
-`unittest.mock` requiere usar `with patch(...)` como context manager o como decorador,
-lo que puede hacer los tests más verbosos. `pytest-mock` expone la fixture `mocker`,
-que se integra naturalmente con el estilo de pytest y maneja el cleanup automáticamente
-al finalizar cada test.
+**Por qué tres fixtures separadas en lugar de crear los dicts dentro del test:**
+Cada fixture tiene un nombre descriptivo: `valid_route`, `invalid_route_negative`,
+`invalid_route_incomplete`. Al leer el test basta con el nombre para entender qué
+escenario se está probando. Si mañana la estructura de una ruta cambia, se actualiza
+la fixture una sola vez — no tres tests distintos.
 
-```python
-# Con unittest.mock (context manager)
-from unittest.mock import patch
+**Por qué los dos `match=` son diferentes:**
+`match="Violación de dominio"` verifica el error de valor inválido.
+`match="Payload corrupto"` verifica el error de estructura. Son errores distintos
+con mensajes distintos — si alguien intercambia las excepciones por error, exactamente
+el test equivocado falla, no ambos.
 
-def test_con_patch():
-    with patch("modulo.funcion") as mock_fn:
-        mock_fn.return_value = 99
-        assert calcular() == 99
-# Al salir del with, el patch se revierte
-
-# Con pytest-mock (fixture)
-def test_con_mocker(mocker):
-    mock_fn = mocker.patch("modulo.funcion", return_value=99)
-    assert calcular() == 99
-# Al finalizar el test, pytest-mock revierte automáticamente
-```
-
-### El path correcto para patch: dónde se usa, no dónde se define
-
-Esta es la regla más importante —y más confusa— de los mocks:
-
-**Parchea el nombre en el módulo donde se importa y usa, no donde está definido.**
-
-```python
-# En requests_helper.py
-import httpx
-
-def obtener_datos(url: str) -> dict:
-    respuesta = httpx.get(url)  # httpx se usa aquí
-    return respuesta.json()
-```
-
-```python
-# En el test — parchea donde SE USA, no "httpx.get"
-def test_obtener_datos(mocker):
-    mock_get = mocker.patch("requests_helper.httpx.get")
-    mock_get.return_value.json.return_value = {"clave": "valor"}
-
-    resultado = obtener_datos("https://ejemplo.com")
-    assert resultado == {"clave": "valor"}
-```
-
-Si parcheas `httpx.get` directamente pero `requests_helper` ya importó `httpx`,
-el patch no tendrá efecto porque el nombre local ya está enlazado.
-
-### spec= para detectar atributos inexistentes
-
-Por defecto, `MagicMock` acepta cualquier atributo sin error, lo que puede enmascarar
-bugs (por ejemplo, llamar a `mock.repsuesta` en lugar de `mock.respuesta`):
-
-```python
-from unittest.mock import MagicMock
-
-class Cliente:
-    def obtener(self, url: str) -> dict: ...
-
-mock_cliente = MagicMock(spec=Cliente)
-mock_cliente.obtener("https://ejemplo.com")  # OK
-mock_cliente.obtenerr("https://ejemplo.com")  # AttributeError — typo detectado
-```
-
-Con `spec=`, el mock solo acepta atributos y métodos que existen en la clase real.
-
-```python
-def test_con_spec(mocker):
-    mock = mocker.patch("mi_modulo.Cliente", spec=Cliente)
-    mock.return_value.obtener.return_value = {"dato": 1}
-    ...
-```
-
-▶ Ejecuta el ejemplo:
-  uv run scripts/clase_04/conceptos/02_mocks.py
+**El flujo del happy path:**
+`test_validation_passes_with_correct_data` solo hace `assert ... is True` — no
+usa `pytest.raises`. El happy path verifica que la función retorna el valor correcto,
+los sad paths verifican que falla con el error correcto.
 
 ---
 
-## 5. parametrize — un test, múltiples casos
+## 3. Mocks con pytest-mock
+
+### Qué problema resuelve un mock
+
+Un test que llama a `httpx.get(url)` de verdad depende de la red, consume cuota de
+API, y puede fallar por razones ajenas al código. Un mock reemplaza esa llamada por
+un doble controlado que devuelve exactamente lo que el test necesita.
+
+### mocker.patch — la fixture de pytest-mock
+
+`mocker.patch(ruta)` reemplaza el objeto en `ruta` por un `MagicMock` durante el
+test. Se revierte automáticamente al finalizar.
+
+```python
+def test_fetch_clima_ok(mocker):
+    mock_get = mocker.patch("httpx.get")
+    mock_get.return_value.json.return_value = {"temp": 22.0, "condition": "Sunny"}
+    mock_get.return_value.raise_for_status.return_value = None
+
+    resultado = fetch_clima("Valencia")
+    assert resultado["temp"] == 22.0
+```
+
+### La regla del path: parchea donde se USA
+
+El path debe apuntar al módulo donde se usa la función, no donde está definida:
+
+```python
+# fetch_clima.py importa httpx — el patch va en fetch_clima.httpx.get
+mocker.patch("fetch_clima.httpx.get")
+
+# Si parcheas "httpx.get" directamente puede no funcionar:
+# el módulo ya tiene su referencia local a httpx.get al importar
+```
+
+### side_effect para simular errores
+
+`side_effect` hace que el mock lance una excepción en lugar de retornar un valor:
+
+```python
+mock_get.side_effect = httpx.TimeoutException("Read timeout")
+# ahora cualquier llamada a mock_get() lanzará TimeoutException
+```
+
+---
+
+▶ Ejecuta el ejemplo:
+  uv run pytest scripts/clase_04/conceptos/02_pytest_mock.py -v
+
+---
+
+### Análisis de 02_pytest_mock.py
+
+El script tiene un adaptador `get_traffic_status()` que llama a `httpx.get` y
+traduce errores de red a errores de dominio. Tres tests cubren sus tres ramas.
+
+**Por qué existe `TrafficAPIError`:**
+Es una excepción de dominio — la aplicación no debería exponer `httpx.HTTPStatusError`
+hacia arriba. Si mañana se cambia de httpx a requests, el resto de la aplicación
+sigue esperando `TrafficAPIError`, no una excepción de httpx. El adaptador traduce
+entre el mundo externo y el dominio propio.
+
+**Por qué el test de timeout usa `side_effect` y no `return_value`:**
+`side_effect = httpx.TimeoutException(...)` hace que el mock *lance* la excepción
+al ser llamado, en lugar de retornar algo. Es la única forma de simular un timeout:
+la función no retorna nada, interrumpe la ejecución.
+
+**Qué verifica `assert_called_once_with("https://api.traffic.com/v1/Barcelona", timeout=2.0)`:**
+Verifica URL y parámetro `timeout` juntos. Si alguien elimina el `timeout=2.0` de la
+llamada real en producción, este test falla inmediatamente. Es un contrato explícito.
+
+**Por qué el test de HTTP 500 usa `match="Fallo en la API de tráfico: HTTP 500"`:**
+El mensaje del error incluye el código de estado. Si la función cambia el mensaje
+o deja de incluir el código, el test falla. Es una especificación del contrato del
+adaptador, no solo una verificación de que algo falló.
+
+---
+
+## 4. @pytest.mark.parametrize
 
 ### El antipatrón: loop dentro del test
 
-Un error común al probar múltiples casos es hacer un loop dentro del test:
-
 ```python
-def test_es_par_loop():
-    casos = [2, 4, 6, 8]
-    for numero in casos:
-        assert numero % 2 == 0  # si falla el caso 3, ¿cuál fue?
+def test_evaluate_delay_loop():
+    casos = [(5, "OK"), (30, "WARNING"), (90, "DANGER")]
+    for minutos, esperado in casos:
+        assert evaluate_delay(minutos) == esperado  # si falla el 2°, el 3° no se ejecuta
 ```
 
-El problema: si el tercer caso falla, el test se detiene ahí. No sabes si los
-siguientes también fallaban. Además, el reporte de pytest muestra un solo fallo
-sin indicar qué valor causó el problema.
+Si el caso del medio falla, el test se detiene. No sabes si el tercero también
+fallaba. Y el reporte solo muestra un fallo sin decir qué valor lo causó.
 
-### @pytest.mark.parametrize — cada caso es un test independiente
+### Un case, un test
 
-Con `parametrize`, pytest genera un test separado por cada caso. Si tres de diez
-fallan, ves exactamente cuáles son:
+Con `parametrize`, pytest genera un test independiente por cada caso:
 
 ```python
-import pytest
-
-@pytest.mark.parametrize("numero", [2, 4, 6, 8])
-def test_es_par(numero):
-    assert numero % 2 == 0
-```
-
-Pytest ejecuta `test_es_par[2]`, `test_es_par[4]`, `test_es_par[6]`, `test_es_par[8]`
-como tests independientes.
-
-### Múltiples parámetros
-
-Cuando la función bajo test recibe varios argumentos, los casos se pasan como tuplas:
-
-```python
-@pytest.mark.parametrize("a, b, esperado", [
-    (1, 2, 3),
-    (0, 0, 0),
-    (-1, 1, 0),
-    (100, -50, 50),
+@pytest.mark.parametrize("minutos, esperado", [
+    (5,  "OK"),
+    (30, "WARNING"),
+    (90, "DANGER"),
 ])
-def test_suma(a, b, esperado):
-    assert a + b == esperado
+def test_evaluate_delay(minutos: int, esperado: str):
+    assert evaluate_delay(minutos) == esperado
 ```
 
-### IDs personalizados
+El reporte muestra `test_evaluate_delay[5-OK]`, `test_evaluate_delay[30-WARNING]`,
+`test_evaluate_delay[90-DANGER]` — cada uno independiente. Si el segundo falla,
+el tercero sigue ejecutando.
 
-Por defecto, pytest genera IDs como `test_suma[1-2-3]`. Puedes hacerlos legibles:
+### Edge cases de límite
+
+Los casos más importantes son los que están justo en los límites de cada rama:
 
 ```python
-@pytest.mark.parametrize("entrada, esperado", [
-    ("hola mundo", 2),
-    ("una", 1),
-    ("", 0),
-], ids=["dos_palabras", "una_palabra", "vacia"])
-def test_contar_palabras(entrada, esperado):
-    assert len(entrada.split()) == esperado
+@pytest.mark.parametrize("minutos, esperado", [
+    (14, "OK"),      # último valor antes del cambio
+    (15, "WARNING"), # primer valor de la zona WARNING
+    (44, "WARNING"), # último WARNING
+    (45, "DANGER"),  # primer DANGER
+])
 ```
 
-Ahora el reporte muestra `test_contar_palabras[dos_palabras]`, que comunica
-la intención del caso.
-
-▶ Ejecuta el ejemplo:
-  uv run scripts/clase_04/conceptos/03_parametrize.py
+Si alguien cambia `< 15` por `<= 15` en el código, exactamente el test `[14-OK]`
+y el `[15-WARNING]` fallan — señalando el cambio con precisión.
 
 ---
 
-## 6. monkeypatch — variables de entorno y estado del sistema
+▶ Ejecuta el ejemplo:
+  uv run pytest scripts/clase_04/conceptos/03_pytest_parametrize.py -v
 
-### setenv, delenv, setattr
+---
 
-La fixture `monkeypatch` modifica el entorno de ejecución durante un test y revierte
-todos los cambios al finalizar:
+### Análisis de 03_pytest_parametrize.py
+
+El script define `evaluate_delay(minutes)` con tres zonas (OK/WARNING/DANGER)
+y 6 casos parametrizados.
+
+**Por qué 6 casos y no 3:**
+Los 3 casos normales (5, 30, 90) verifican el comportamiento esperado en el centro
+de cada zona. Los 3 casos de límite (14, 15, 45) verifican los bordes. Es en los
+bordes donde las condiciones `< 15` y `< 45` pueden equivocarse.
+
+**Qué dice cada comentario en los casos:**
+`# Caso de uso normal`, `# Edge case inferior`, `# Edge case límite` — son
+especificaciones, no decoración. Alguien que lee el test 6 meses después entiende
+por qué ese número está ahí y qué ocurriría si el código cambiara.
+
+**Por qué el valor 14 y no 13:**
+14 es el máximo valor que debe retornar "OK". Si el test usara 10, pasaría tanto
+con `< 15` como con `<= 14`. El 14 es específico: solo pasa si la condición es
+estrictamente `< 15`.
+
+---
+
+## 5. El Test Integrador
+
+### Combinar los tres patrones
+
+En tests reales, los tres patrones aparecen juntos. Un test que verifica la lógica
+de negocio de un orquestador necesita:
+
+- Una **fixture** que defina el estado base del sistema (el usuario, la configuración)
+- **Parametrize** para cubrir todas las ramas de la función con distintas entradas
+- **mocker** para aislar la dependencia externa
+
+El resultado es un solo test que genera N casos independientes, cada uno con su
+propio estado y su propio mock:
 
 ```python
-def test_con_variable_de_entorno(monkeypatch):
-    monkeypatch.setenv("API_KEY", "clave-de-prueba")
-    # dentro del test, os.environ["API_KEY"] == "clave-de-prueba"
-    assert obtener_api_key() == "clave-de-prueba"
-    # al salir, la variable vuelve a su estado original
+@pytest.mark.parametrize("clima, recomendacion", [
+    ("Sunny", "Ride a Bike"),
+    ("Rain",  "Take the Train"),
+])
+def test_recomendacion(mocker, perfil_usuario, clima, recomendacion):
+    mocker.patch("httpx.get").return_value.json.return_value = {"condition": clima}
 
-def test_sin_variable_critica(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    # raising=False evita error si la variable no existía
-    with pytest.raises(KeyError):
-        obtener_configuracion()
+    resultado = get_commute_recommendation("Madrid", perfil_usuario)
 
-def test_con_atributo_modificado(monkeypatch):
-    monkeypatch.setattr("os.path.sep", "/")
-    assert construir_ruta("a", "b") == "a/b"
+    assert resultado == recomendacion
 ```
 
-### Por qué es mejor que modificar os.environ directamente
+`perfil_usuario` viene de la fixture. `clima` viene del parametrize. El mock
+conecta los dos: inyecta el clima del parametrize en la función bajo test.
 
-Si un test hace `os.environ["API_KEY"] = "test"` sin cleanup, esa variable queda
-contaminando todos los tests siguientes. El orden de ejecución importa, los tests
-no son independientes, y los bugs son difíciles de rastrear.
-
-`monkeypatch` garantiza que cada test parte de un estado limpio, sin importar el orden.
-
-```python
-# MAL — contamina el entorno global
-def test_malo():
-    os.environ["MODO"] = "test"
-    assert procesar() == "resultado-test"
-    # si este test falla a mitad, la variable queda sucia
-
-# BIEN — cleanup automático garantizado
-def test_bien(monkeypatch):
-    monkeypatch.setenv("MODO", "test")
-    assert procesar() == "resultado-test"
-```
-
-### Diferencia entre monkeypatch y mocker
-
-Ambas fixtures modifican el entorno durante el test y revierten al finalizar, pero
-tienen propósitos distintos:
-
-| Fixture | Usar para |
-|---------|-----------|
-| `monkeypatch` | Variables de entorno, atributos simples, paths del sistema |
-| `mocker` | Objetos Python, funciones, clases (con tracking de llamadas) |
-
-`monkeypatch` es más simple: modifica un valor y lo restaura. `mocker` crea un
-`MagicMock` completo que registra llamadas y permite verificar comportamiento.
-
-Regla práctica: si necesitas verificar cuántas veces se llamó algo o con qué argumentos,
-usa `mocker`. Si solo necesitas controlar un valor de entorno o un atributo simple,
-usa `monkeypatch`.
+---
 
 ▶ Ejecuta el ejemplo:
-  uv run scripts/clase_04/conceptos/04_monkeypatch.py
+  uv run pytest scripts/clase_04/conceptos/04_commute_integrator.py -v
+
+---
+
+### Análisis de 04_commute_integrator.py
+
+El script combina los tres patrones para verificar `get_commute_recommendation()`,
+una función que decide el transporte según el clima y el perfil del usuario.
+
+**Por qué `eco_user_profile` tiene `has_car: False`:**
+El perfil del usuario afecta qué rama se ejecuta cuando llueve. Si `has_car` fuera
+`True`, el caso `("Rain", "Take the Train")` fallaría — la función tomaría otra rama.
+La fixture define explícitamente el escenario que los tests están probando.
+
+**Por qué "Snow" y "Hurricane" van al mismo resultado "Take the Bus":**
+Son edge cases del `else` en el código — valores que no están mapeados explícitamente
+en el `if/elif`. Verificar que ambos caen en el mismo fallback garantiza que no existe
+un `elif "Snow"` escondido. El cuarto caso (`Hurricane`) es el edge case extremo.
+
+**Cómo el parametrize conecta con el mock:**
+`clima_simulado` de parametrize se inyecta en `mock_get.return_value.json.return_value`.
+Cada ejecución del test tiene un mock distinto configurado con su propio clima. El mock
+no sabe qué clima tiene — solo devuelve lo que parametrize le asignó.
+
+**Qué verifica `mock_get.assert_called_once_with("https://api.weather.com/v1/Madrid")`:**
+Que la función construyó la URL correctamente con el origen `"Madrid"`. Si alguien
+cambia el endpoint en el código, este assert lo detecta aunque el resultado de la
+recomendación sea el mismo.

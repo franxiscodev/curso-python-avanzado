@@ -1,206 +1,315 @@
-# Clase 06 — Conceptos: Eficiencia y Profiling
+# Conceptos — Clase 06: Eficiencia y Profiling
+
+Tres técnicas para escribir código Python que no se arrastra cuando
+la carga escala: medir con cProfile, procesar en streaming con generadores
+y evitar cómputo repetido con lru_cache.
 
 ---
 
-## 1. cProfile — medir antes de optimizar
+## 1. El ciclo de optimización — medir antes de tocar nada
 
-Antes de optimizar cualquier cosa, hay que medir. La intuición sobre qué
-parte del código es lenta falla más de lo que acierta.
+La intuición sobre qué parte del código es lenta falla más de lo que acierta.
+El ciclo correcto es:
 
-`cProfile` es el profiler estándar de Python. Registra cuánto tiempo se
-gasta en cada función del programa.
+```
+1. Medir → cProfile da el mapa completo de todas las funciones
+2. Identificar → buscar la función con alto tottime (tiempo propio)
+3. Mejorar → aplicar la técnica adecuada
+4. Volver a medir → confirmar que el cambio tuvo efecto
+```
 
-### Uso básico
+### Las tres herramientas de esta clase
+
+| Herramienta | Cuándo usarla | Lo que resuelve |
+|-------------|--------------|-----------------|
+| `cProfile` | No sabes dónde está el problema | Da el mapa completo de todas las funciones |
+| `generadores` | Tienes datos en páginas o streams | Evita cargar todo en memoria |
+| `lru_cache` | La misma función se llama con los mismos args | Evita repetir el cómputo |
+
+### Medir el tiempo de una función concreta: `time.perf_counter`
+
+Cuando ya sabes qué función es el cuello de botella y quieres medir exactamente
+cuánto tarda sin el overhead del profiler:
 
 ```python
-import cProfile
-import pstats
-import io
+import time
 
-profiler = cProfile.Profile()
-profiler.enable()          # comienza a medir
-resultado = mi_funcion()
-profiler.disable()         # deja de medir
+inicio = time.perf_counter()
+resultado = fetch_clima("Valencia")
+duracion = time.perf_counter() - inicio
 
-# Mostrar resultados ordenados por tiempo acumulado
-stream = io.StringIO()
-stats = pstats.Stats(profiler, stream=stream)
-stats.sort_stats("cumulative")
-stats.print_stats(10)      # top 10 funciones más lentas
-print(stream.getvalue())
+print(f"fetch_clima tardó {duracion:.4f}s")
 ```
 
-### Interpretar los resultados
+`perf_counter` es el reloj de mayor resolución disponible en Python.
+Se usa para microbenchmarks de una función específica ya identificada.
+Para comparar múltiples llamadas del mismo tipo, `timeit` (sección 5) es más preciso.
 
-```
-ncalls  tottime  percall  cumtime  percall  filename:lineno(function)
-     1    0.000    0.000    0.100    0.100  mi_script.py:10(programa)
-     1    0.100    0.100    0.100    0.100  {built-in method time.sleep}
-```
+---
+
+## 2. cProfile — el mapa completo del programa
+
+### Qué registra
+
+`cProfile` instrumenta cada llamada a función y registra:
 
 | Columna | Qué mide |
 |---------|----------|
 | `ncalls` | Número de veces que se llamó a la función |
-| `tottime` | Tiempo dentro de la función (sin contar sus subcalls) |
+| `tottime` | Tiempo dentro de la función sin contar sus subcalls |
 | `cumtime` | Tiempo total: función + todas las funciones que llama |
 
-**Estrategia:** ordenar por `cumtime` identifica el árbol más costoso.
-Bajar por él hasta encontrar la función con alto `tottime` es el cuello
-de botella real.
+**Estrategia:** ordenar por `tottime` identifica la función que más CPU consume
+por sí sola. Es el cuello de botella real.
 
-### Cuándo usarlo
+### Patrón de uso
 
-- Tienes código lento pero no sabes dónde.
-- Quieres confirmar que tu optimización tuvo efecto.
-- Quieres comparar dos implementaciones.
+```python
+import cProfile
+import pstats
+
+profiler = cProfile.Profile()
+profiler.enable()
+procesar_usuarios_legacy(payload_masivo)
+profiler.disable()
+
+stats = pstats.Stats(profiler).sort_stats('tottime')
+stats.print_stats(5)  # top 5 funciones más costosas
+```
+
+El resultado es una tabla con las funciones que más tiempo consumen.
+Sin este mapa, cualquier optimización es un disparo a ciegas.
 
 ▶ Ejecuta el ejemplo:
+  `uv run python scripts/clase_06/conceptos/01_cprofile_basico.py`
+
+### Analiza la salida
+
+El script valida 50,000 usuarios con Pydantic + `EmailStr`. La salida muestra
+algo como:
+
 ```
-uv run scripts/clase_06/conceptos/01_cprofile_basico.py
+ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+ 50000    1.335    0.000   11.141    0.000  email_validator/syntax.py(validate_email_domain_name)
+200000    1.075    0.000    4.043    0.000  idna/core.py(check_label)
 ```
+
+- La función más costosa no es `procesar_usuarios_legacy` — es la validación
+  del dominio del email dentro de `email-validator`.
+- `ncalls=50000` confirma que se llama una vez por usuario.
+- La conclusión: si el email no necesita validación IDNA completa, hay margen
+  de optimización. Si la necesita, el cuello de botella es inherente al dominio.
 
 ---
 
-## 2. Generadores — procesamiento lazy
+## 3. Generadores con yield — procesamiento lazy
 
-Un generador calcula valores bajo demanda, uno a la vez.
-Esto ahorra memoria cuando no necesitas todos los resultados a la vez.
-
-### yield — la clave del generador
+### El problema de cargar todo en memoria
 
 ```python
-def cuadrados(n: int):
-    for i in range(n):
-        yield i * i  # pausa aquí, retorna el valor, guarda el estado
+def fetch_todas_las_rutas() -> list[str]:
+    all_routes = []
+    for page in range(50):          # 50 páginas de API
+        all_routes.extend(api_page(page))   # 10,000 rutas por página
+    return all_routes               # retorna cuando tiene LAS 500,000
 ```
 
-`yield` hace dos cosas:
-1. Retorna el valor al consumidor.
-2. Pausa la función y guarda su estado completo.
+500,000 strings en una lista ocupan varios MB de RAM.
+Si la API tiene 500 páginas en lugar de 50, ocupa 10x más.
 
-La próxima vez que el consumidor pida un valor, la función retoma
-exactamente donde se quedó.
-
-### Lista vs Generador
+### La solución: yield
 
 ```python
-# Lista — construye todo en memoria antes de retornar
-valores = [i * i for i in range(1_000_000)]  # ocupa ~8 MB
-
-# Generador — calcula uno por uno, bajo demanda
-valores = (i * i for i in range(1_000_000))  # ocupa ~200 bytes
+def fetch_rutas_paginadas():
+    for page in range(50):
+        pagina = api_page(page)
+        for ruta in pagina:
+            yield ruta   # devuelve una ruta, pausa, guarda el estado
 ```
 
-La diferencia importa cuando:
-- El dataset no cabe en RAM.
-- Solo necesitas procesar los primeros N elementos.
-- Construyes un pipeline de transformaciones.
+`yield` hace dos cosas en cada iteración:
+1. Entrega el valor al consumidor.
+2. Pausa la función y guarda su estado completo (variables locales, posición).
+
+El consumidor recibe la primera ruta antes de que se pidan las páginas
+siguientes. El objeto generador solo ocupa ~200 bytes en memoria sin importar
+cuántas rutas tenga.
+
+### yield from — delegar en un generador interno
+
+```python
+def fetch_rutas_con_alternativas(perfil: str):
+    yield from fetch_rutas_principales(perfil)   # delega al primer generador
+    yield from fetch_rutas_alternativas(perfil)  # luego al segundo
+```
+
+`yield from` itera sobre el generador interno y re-emite cada valor
+al consumidor externo. Equivale a un bucle `for item in gen: yield item`
+pero más legible y eficiente.
 
 ### Cuándo NO usar generadores
 
-- Necesitas acceso por índice: `items[5]` no funciona con generadores.
-- Necesitas `len()` antes de iterar.
-- El mismo generador se va a iterar más de una vez (se agota).
+- Necesitas `len()` o acceso por índice: `rutas[5]` no funciona.
+- El mismo generador se itera más de una vez (se agota).
+- El resultado debe pasarse a una función que requiere lista: `sorted()`, `json.dumps()`.
 
 ▶ Ejecuta el ejemplo:
+  `uv run python scripts/clase_06/conceptos/02_generadores_yield.py`
+
+### Analiza la salida
+
 ```
-uv run scripts/clase_06/conceptos/02_generadores_yield.py
+RAM usada por Lista: 4.21 MB
+RAM usada por Generador: 216 bytes (¡Casi cero!)
+Primer valor procesado: Ruta_Geo_Data_0
 ```
+
+- La lista materializa las 500,000 strings antes de retornar: 4+ MB.
+- El generador es un objeto de estado de ~200 bytes; los datos se calculan
+  bajo demanda.
+- `next(rutas_generador)` consume solo el primer elemento. Las 499,999
+  restantes no se calculan aún.
+- En PyCommute, esto es crítico cuando la API de rutas devuelve cientos
+  de páginas y el usuario solo necesita las primeras N.
 
 ---
 
-## 3. AsyncGenerator — yield en funciones async
+## 4. lru_cache — no llamar a la API dos veces por lo mismo
 
-Un `AsyncGenerator` combina la laziness de los generadores con la
-capacidad de hacer `await` entre valores.
-
-```python
-from typing import AsyncGenerator
-
-async def gen_datos() -> AsyncGenerator[int, None]:
-    for i in range(5):
-        await hacer_algo_async()  # puede hacer await entre yields
-        yield i
-```
-
-El consumidor usa `async for`:
+### El problema
 
 ```python
-async def main():
-    async for valor in gen_datos():
-        print(valor)
+# Sin cache: cada llamada hace una petición HTTP
+clima_madrid = fetch_clima("Madrid")   # 800ms
+clima_madrid = fetch_clima("Madrid")   # 800ms de nuevo — innecesario
 ```
 
-### Diferencia con un generador síncrono
+Si 100 usuarios piden el clima de Madrid en el mismo minuto, se hacen
+100 peticiones HTTP idénticas.
 
-Un generador síncrono no puede hacer `await`. Si la función que genera
-datos hace I/O (API calls, base de datos), necesitas un `AsyncGenerator`.
-
-```python
-# Esto NO funciona en un generador síncrono
-def gen_rutas():
-    for profile in profiles:
-        route = await get_route(...)  # SyntaxError — no puede await aquí
-        yield route
-
-# Esto SÍ funciona en un AsyncGenerator
-async def iter_rutas() -> AsyncGenerator[dict, None]:
-    for profile in profiles:
-        route = await get_route(...)  # await dentro de async def — ok
-        yield route
-```
-
----
-
-## 4. lru_cache — cachear resultados costosos
-
-`lru_cache` guarda el resultado de llamadas anteriores en memoria.
-Si la misma función se llama con los mismos argumentos, retorna el
-resultado guardado sin ejecutar la función de nuevo.
+### La solución: @lru_cache
 
 ```python
 from functools import lru_cache
 
 @lru_cache(maxsize=128)
-def get_coordinates(city: str) -> tuple[float, float]:
-    # Esta función solo se ejecuta la primera vez por cada `city`
-    return buscar_coordenadas(city)
+def fetch_clima(ciudad: str) -> str:
+    return llamada_http(ciudad)   # solo se ejecuta la primera vez por ciudad
 
-get_coordinates("Valencia")  # ejecuta la función (cache miss)
-get_coordinates("Valencia")  # retorna desde cache (cache hit, cero cómputo)
+fetch_clima("Madrid")   # cache miss — ejecuta llamada_http
+fetch_clima("Madrid")   # cache hit — retorna resultado guardado, 0ms
 ```
 
-### Inspeccionar el cache
+`lru_cache` guarda el resultado por cada combinación única de argumentos.
+Cuando `maxsize=128` se llena, descarta la entrada menos usada recientemente
+(Least Recently Used).
+
+### Inspeccionar el estado del cache
 
 ```python
-info = get_coordinates.cache_info()
-# CacheInfo(hits=5, misses=3, maxsize=128, currsize=3)
+info = fetch_clima.cache_info()
+# CacheInfo(hits=98, misses=2, maxsize=128, currsize=2)
 ```
 
-- `hits`: cuántas veces se evitó el cómputo.
-- `misses`: cuántas veces se ejecutó la función real.
-- `cache_clear()`: vacía el cache (útil en tests).
+- `misses=2`: solo se hicieron 2 llamadas reales (Madrid y Valencia).
+- `hits=98`: los 98 usuarios restantes recibieron respuesta del cache.
+- `cache_clear()`: vacía el cache, imprescindible para aislar tests.
 
-### Limitación importante
+### Limitación: argumentos hashables
 
-Solo funciona con argumentos **hashables**: `str`, `int`, `tuple`, etc.
-No funciona con listas ni diccionarios.
+`lru_cache` usa los argumentos como clave de dict interno.
+Solo funciona con tipos hashables: `str`, `int`, `tuple`.
+Pasar una lista lanza `TypeError`.
 
 ```python
+# Solución para argumentos mutables:
+def fetch_rutas_para_perfil(ciudades: list[str]) -> list[str]:
+    return _fetch_rutas_cached(tuple(ciudades))   # convierte a tupla
+
 @lru_cache
-def func(items: list[int]) -> int:  # TypeError al llamar — lista no es hashable
+def _fetch_rutas_cached(ciudades: tuple[str, ...]) -> list[str]:
     ...
 ```
 
-Solución: convertir la lista a tupla antes de llamar a la función cacheada.
+▶ Ejecuta el ejemplo:
+  `uv run python scripts/clase_06/conceptos/03_lru_cache.py`
+
+### Analiza la salida
+
+```
+--- Flujo de Usuarios en PyCommute ---
+[HTTP] Consultando API para Madrid...
+Usuario 1 pide: Clima actual en Madrid: Soleado, 24 grados
+Tiempo: 1.5004s
+
+[HTTP] Consultando API para Valencia...
+Usuario 2 pide: Clima actual en Valencia: Soleado, 24 grados
+Tiempo: 1.5004s
+
+Usuario 3 pide: Clima actual en Madrid: Soleado, 24 grados
+Tiempo: 0.0000s (CACHE HIT)
+
+Metricas del Sistema de Cache:
+CacheInfo(hits=1, misses=2, maxsize=128, currsize=2)
+```
+
+- Las dos primeras llamadas (Madrid, Valencia) tardan 1.5s cada una: son misses.
+- La tercera (Madrid de nuevo) tarda 0s: es un hit. No hay llamada HTTP.
+- `cache_info()` confirma: 2 misses, 1 hit. Solo 2 llamadas reales a la API.
+
+---
+
+## 5. Benchmark comparativo con timeit
+
+### timeit vs time.perf_counter
+
+`time.perf_counter` mide una ejecución. Es suficiente para funciones lentas
+(I/O, sleep). Para funciones rápidas, una sola ejecución tiene demasiado ruido
+(GC, interrupciones del OS).
+
+`timeit` repite la función N veces y mide el total:
+
+```python
+import timeit
+
+t = timeit.timeit(fetch_clima_cached, number=100_000)
+print(f"100,000 llamadas en {t:.4f}s")
+```
+
+Al repetir muchas veces, el ruido por ejecución se vuelve insignificante.
+El resultado es comparable y reproducible entre máquinas.
+
+### El benchmark del script
+
+`04_benchmark_comparativo.py` compara dos formas de procesar un `LocationDTO`:
+
+```python
+def parseo_manual():
+    lat = float(raw_data["lat"])
+    lon = float(raw_data["lon"])
+    city = str(raw_data["city"])
+
+def parseo_pydantic():
+    return LocationDTO(**raw_data)
+```
 
 ▶ Ejecuta el ejemplo:
-```
-uv run scripts/clase_06/conceptos/03_lru_cache.py
-```
+  `uv run python scripts/clase_06/conceptos/04_benchmark_comparativo.py`
 
-### Comparativa de las tres técnicas
+### Analiza la salida
 
 ```
-uv run scripts/clase_06/conceptos/04_benchmark_comparativo.py
+Iniciando Benchmark: 500000 validaciones...
+--------------------------------------------------
+Parseo Manual (Python Puro): 0.08 segundos
+Parseo Pydantic V2 (Rust):   0.46 segundos
 ```
+
+- El parseo manual es más rápido para datos ya correctamente tipados:
+  `float(39.4699)` es trivial en Python.
+- Pydantic tiene overhead de instanciación del modelo aunque el core sea Rust.
+- Esto no es un argumento contra Pydantic: su valor está en la **validación
+  automática** (detecta `"abc"` donde se espera `float`), en los mensajes de
+  error precisos y en la coerción desde strings (variables de entorno, JSON).
+- `timeit` es la herramienta correcta aquí: 500,000 repeticiones eliminan el
+  ruido y hacen la comparación significativa.

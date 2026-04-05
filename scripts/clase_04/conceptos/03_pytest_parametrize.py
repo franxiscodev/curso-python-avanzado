@@ -1,97 +1,40 @@
-"""parametrize: un test, multiples casos de prueba.
+"""@pytest.mark.parametrize: un test, seis casos independientes.
 
-Demuestra por que un loop en el test es un antipatron y como
-@pytest.mark.parametrize convierte cada caso en un test independiente.
+Demuestra parametrize con 6 casos para evaluate_delay():
+- Valores normales: 5 (OK), 30 (WARNING), 90 (DANGER)
+- Edge cases de limite: 14 (ultimo OK), 15 (primer WARNING), 45 (primer DANGER)
 
-Ejecutar:
-    uv run scripts/clase_04/conceptos/03_pytest_parametrize.py
+Los 4 edge cases de limite son los mas importantes: si alguien cambia
+un '<' por '<=' en evaluate_delay(), exactamente esos tests fallan.
+
+Cada caso genera un test independiente con su propio ID en el reporte.
+Si el caso [14-OK] falla, los otros 5 siguen ejecutando.
+
+Ejecutar (desde curso/):
+    uv run pytest scripts/clase_04/conceptos/03_pytest_parametrize.py -v
 """
 
-# --- La funcion que vamos a testear ---
+import pytest
 
 
-def clasificar_temperatura(temp: float) -> str:
-    """Clasifica la temperatura en una categoria descriptiva."""
-    if temp < 0:
-        return "bajo cero"
-    if temp < 15:
-        return "frio"
-    if temp < 25:
-        return "templado"
-    return "calido"
+def evaluate_delay(minutes: int) -> str:
+    if minutes < 15:
+        return "OK"
+    elif minutes < 45:
+        return "WARNING"
+    return "DANGER"
 
 
-# --- Antipatron: loop en el test ---
-
-print("=== Antipatron: loop en el test ===")
-print()
-
-casos = [(-5, "bajo cero"), (10, "frio"), (22, "templado"), (30, "calido")]
-
-errores = 0
-for temp, esperado in casos:
-    resultado = clasificar_temperatura(temp)
-    if resultado == esperado:
-        print(f"  OK  {temp:4}deg -> {resultado}")
-    else:
-        print(f"  FAIL {temp:4}deg -> esperado={esperado}, obtenido={resultado}")
-        errores += 1
-
-print()
-if errores == 0:
-    print("Todos los casos pasaron.")
-else:
-    print(f"{errores} casos fallaron.")
-
-print()
-print("Problema: si el caso de -5deg falla, el loop se detiene")
-print("y no sabes cuantos otros casos tambien fallan.")
-print()
-
-# --- Patron correcto: parametrize ---
-
-print("=== Patron correcto con @pytest.mark.parametrize ===")
-print()
-print("  @pytest.mark.parametrize('temp,esperado', [")
-print("      (-5,  'bajo cero'),")
-print("      (10,  'frio'),")
-print("      (22,  'templado'),")
-print("      (30,  'calido'),")
-print("  ])")
-print("  def test_clasificar_temperatura(temp, esperado):")
-print("      assert clasificar_temperatura(temp) == esperado")
-print()
-print("Con parametrize, pytest ejecuta 4 tests independientes:")
-print("  test_clasificar_temperatura[-5-bajo cero]")
-print("  test_clasificar_temperatura[10-frio]")
-print("  test_clasificar_temperatura[22-templado]")
-print("  test_clasificar_temperatura[30-calido]")
-print()
-print("Si [-5-bajo cero] falla, los otros 3 se siguen ejecutando.")
-print("El reporte muestra exactamente que caso fallo y con que valores.")
-print()
-
-# --- Parametrize con multiples parametros ---
-
-print("=== Parametrize con multiples parametros ===")
-print()
-print("  @pytest.mark.parametrize('ciudad,pais,esperado', [")
-print("      ('Valencia', 'ES', True),")
-print("      ('Paris',    'FR', True),")
-print("      ('',         'ES', False),")
-print("  ])")
-print("  def test_ciudad_valida(ciudad, pais, esperado):")
-print("      assert es_ciudad_valida(ciudad, pais) == esperado")
-print()
-
-# --- Parametrize con IDs personalizados ---
-
-print("=== IDs personalizados para mejor legibilidad ===")
-print()
-print("  @pytest.mark.parametrize('temp,esperado', [")
-print("      (-5,  'bajo cero'),")
-print("      (10,  'frio'),")
-print("  ], ids=['bajo_cero', 'frio'])")
-print()
-print("Genera: test_clasificar[bajo_cero] y test_clasificar[frio]")
-print("(mas legible que test_clasificar[-5-bajo cero])")
+@pytest.mark.parametrize(
+    "mins, expected_status",
+    [
+        (5,  "OK"),       # Caso de uso normal
+        (14, "OK"),       # Edge case inferior
+        (15, "WARNING"),  # Edge case límite
+        (30, "WARNING"),  # Caso medio
+        (45, "DANGER"),   # Límite superior
+        (90, "DANGER"),   # Caso extremo
+    ]
+)
+def test_evaluate_delay_all_cases(mins: int, expected_status: str):
+    assert evaluate_delay(mins) == expected_status

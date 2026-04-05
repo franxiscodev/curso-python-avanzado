@@ -1,81 +1,77 @@
-"""El problema que resuelven las fixtures de pytest.
+"""Fixtures en pytest: escenarios nombrados y reutilizables.
 
-Demuestra por que el setup repetido en cada test es un problema
-y como las fixtures centralizan ese setup.
+Demuestra el patrón de fixtures con tres escenarios para validate_route_payload():
+- valid_route: el happy path — datos correctos, la funcion retorna True
+- invalid_route_negative: sad path — distancia negativa, logicamente imposible
+- invalid_route_incomplete: sad path — clave faltante, estructura corrupta
 
-Ejecutar:
-    uv run scripts/clase_04/conceptos/01_pytest_fixtures.py
+Cada fixture define UN estado concreto que pytest inyecta por nombre.
+pytest.raises(ValueError, match="...") verifica tipo de excepcion Y mensaje.
+
+Ejecutar (desde curso/):
+    uv run pytest scripts/clase_04/conceptos/01_pytest_fixtures.py -v
 """
 
-# --- Sin fixture: setup repetido en cada test ---
+import pytest
 
-print("=== Sin fixture: setup repetido ===")
-
-
-def preparar_datos_ciudad() -> dict:
-    """Setup que se repetiria en cada test sin fixtures."""
-    return {"nombre": "Valencia", "temp": 24.12, "descripcion": "cielo despejado"}
+# --- 1. NUESTRA LÓGICA DE NEGOCIO ---
 
 
-def test_sin_fixture_1():
-    datos = preparar_datos_ciudad()  # setup repetido
-    assert "nombre" in datos
-    assert datos["temp"] > 0
-    print("  test_sin_fixture_1: OK")
+def validate_route_payload(payload: dict) -> bool:
+    """Valida un diccionario de ruta. Lanza ValueError si es inválido."""
+    if "distancia_km" not in payload:
+        raise ValueError("Payload corrupto: falta la clave 'distancia_km'")
+
+    if payload["distancia_km"] <= 0:
+        raise ValueError(
+            "Violación de dominio: La distancia debe ser mayor a 0")
+
+    return True
+
+# --- 2. NUESTRO ARSENAL DE FIXTURES ---
+# Tres fixtures = tres escenarios. Cada una tiene un nombre que describe
+# el estado que representa — no "datos_test_1", sino "invalid_route_negative".
 
 
-def test_sin_fixture_2():
-    datos = preparar_datos_ciudad()  # mismo setup de nuevo
-    assert isinstance(datos["temp"], float)
-    print("  test_sin_fixture_2: OK")
+@pytest.fixture
+def valid_route() -> dict:
+    """Fixture: Escenario ideal — todos los campos presentes y válidos."""
+    return {"origen": "Madrid", "destino": "Valencia", "distancia_km": 350}
 
 
-def test_sin_fixture_3():
-    datos = preparar_datos_ciudad()  # y otra vez
-    assert datos["nombre"] == "Valencia"
-    print("  test_sin_fixture_3: OK")
+@pytest.fixture
+def invalid_route_negative() -> dict:
+    """Fixture: Escenario de fallo — distancia lógicamente imposible."""
+    return {"origen": "Madrid", "destino": "Valencia", "distancia_km": -15}
 
 
-test_sin_fixture_1()
-test_sin_fixture_2()
-test_sin_fixture_3()
+@pytest.fixture
+def invalid_route_incomplete() -> dict:
+    """Fixture: Escenario de fallo — estructura corrupta, clave faltante."""
+    return {"origen": "Madrid", "destino": "Valencia"}
 
-print()
-print("El setup se repite en cada test.")
-print("Si el formato de los datos cambia, hay que editar 3 funciones.")
-print()
+# --- 3. NUESTROS TESTS ---
 
-# --- Con fixture: setup centralizado ---
+# Happy Path
 
-print("=== Con fixture: setup centralizado ===")
-print()
-print("  # En conftest.py:")
-print("  @pytest.fixture")
-print("  def datos_ciudad():")
-print('      return {"nombre": "Valencia", "temp": 24.12, "descripcion": "cielo despejado"}')
-print()
-print("  # En test_weather.py (pytest inyecta la fixture automaticamente):")
-print("  def test_campos_correctos(datos_ciudad):")
-print('      assert "nombre" in datos_ciudad')
-print()
-print("  def test_temperatura_es_float(datos_ciudad):")
-print("      assert isinstance(datos_ciudad['temp'], float)")
-print()
-print("Si el formato de los datos cambia, solo se edita conftest.py.")
-print()
 
-# --- Ciclo de vida de una fixture ---
+def test_validation_passes_with_correct_data(valid_route: dict):
+    # pytest inyecta valid_route por nombre — sin import, sin instanciar
+    assert validate_route_payload(valid_route) is True
 
-print("=== Ciclo de vida: setup -> test -> teardown ===")
-print()
-print("  @pytest.fixture")
-print("  def conexion_db():")
-print("      conn = abrir_conexion()   # SETUP — se ejecuta antes del test")
-print("      yield conn                # el test recibe 'conn' aqui")
-print("      conn.close()              # TEARDOWN — se ejecuta despues del test")
-print()
-print("  def test_query(conexion_db):")
-print("      resultado = conexion_db.execute('SELECT 1')")
-print("      assert resultado is not None")
-print()
-print("Ventaja: el teardown se ejecuta incluso si el test falla.")
+# Sad Path 1: Validar el valor numérico
+
+
+def test_validation_fails_with_negative_distance(invalid_route_negative: dict):
+    # match= es una regex: el test PASA solo si ValueError Y el mensaje
+    # contiene exactamente "Violación de dominio"
+    with pytest.raises(ValueError, match="Violación de dominio"):
+        validate_route_payload(invalid_route_negative)
+
+# Sad Path 2: Validar la estructura del diccionario
+
+
+def test_validation_fails_with_missing_keys(invalid_route_incomplete: dict):
+    # Distinto match= que el test anterior — cada error tiene su propio mensaje
+    with pytest.raises(ValueError, match="Payload corrupto"):
+        validate_route_payload(invalid_route_incomplete)

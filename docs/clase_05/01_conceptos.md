@@ -4,47 +4,43 @@
 
 ## 1. Concurrencia vs Paralelismo
 
-### La diferencia conceptual
+**Concurrencia** es sobre estructura: un programa está diseñado para manejar
+múltiples tareas que progresan de forma intercalada. Una tarea se pausa mientras
+espera algo (una respuesta de red, un archivo), y otra avanza en ese hueco.
 
-**Concurrencia** es sobre estructura: múltiples tareas progresan de forma intercalada,
-pero no necesariamente al mismo tiempo. Una tarea se pausa mientras espera (por ejemplo,
-una respuesta de red), y otra avanza mientras tanto.
+**Paralelismo** es sobre ejecución simultánea: múltiples tareas corren literalmente
+al mismo tiempo en distintos núcleos del procesador.
 
-**Paralelismo** es sobre ejecución simultánea: múltiples tareas corren literalmente al
-mismo tiempo en distintos núcleos del procesador.
-
-Un cocinero que enciende el horno, espera que caliente, y mientras corta verduras, está
-siendo **concurrente**. Dos cocineros en cocinas separadas, cada uno preparando un plato
-diferente al mismo tiempo, son **paralelos**.
+Un cocinero que pone agua a hervir, corta verduras mientras espera, y vuelve a la
+olla cuando hierve, es **concurrente**. Dos cocineros en cocinas separadas son
+**paralelos**.
 
 ### El GIL de Python: por qué async funciona para I/O
 
-Python tiene el **GIL** (Global Interpreter Lock): un mecanismo que impide que dos hilos
-ejecuten bytecode de Python al mismo tiempo dentro de un mismo proceso. Esto limita el
-paralelismo real para código CPU-bound.
+Python tiene el **GIL** (Global Interpreter Lock): solo un hilo puede ejecutar
+bytecode Python a la vez. Esto elimina el paralelismo real para código CPU-bound.
 
-Sin embargo, el GIL se libera automáticamente durante operaciones de I/O (lectura de
-red, disco, etc.). Mientras un hilo espera que llegue la respuesta HTTP, el GIL queda
-libre para que otro hilo avance.
+Sin embargo, el GIL se **libera automáticamente** durante operaciones de I/O
+(esperar una respuesta de red, leer disco). Mientras el kernel espera que llegue
+el paquete HTTP, Python puede hacer otra cosa.
 
-`async/await` aprovecha exactamente esto: cede el control en los puntos de espera de
-I/O, sin necesidad de múltiples hilos ni procesos.
+`async/await` hace esto explícito: en cada `await`, el hilo cede el control al
+event loop, que puede ejecutar otras coroutines mientras la I/O está pendiente.
 
 ### Cuándo usar cada herramienta
 
-| Caso de uso | Herramienta recomendada |
-|-------------|------------------------|
-| Múltiples peticiones HTTP, I/O de red | `async/await` |
-| I/O de disco, múltiples tareas de espera | `async/await` |
+| Caso de uso | Herramienta |
+|---|---|
+| Múltiples peticiones HTTP concurrentes | `async/await` |
+| I/O de red o disco con esperas | `async/await` |
 | Cálculos intensivos (CPU-bound) | `multiprocessing` |
 | Librerías síncronas de terceros en paralelo | `threading` |
-| Código ya asíncrono (frameworks como FastAPI) | `async/await` (nativo) |
+| Código ya async (FastAPI, etc.) | `async/await` nativo |
 
-La regla general: si tu código pasa más tiempo **esperando** que **calculando**, async
+La regla: si tu código pasa más tiempo **esperando** que **calculando**, async
 es la herramienta correcta.
 
-▶ Ejecuta el ejemplo:
-  uv run scripts/clase_05/conceptos/01_async_await_basico.py
+En la sección siguiente verás async/await en acción.
 
 ---
 
@@ -52,100 +48,85 @@ es la herramienta correcta.
 
 ### Qué es una coroutine
 
-`async def` define una **coroutine function**. Cuando la llamas, no ejecuta el cuerpo:
-retorna un objeto `coroutine`. El cuerpo solo se ejecuta cuando alguien lo espera.
+`async def` define una **coroutine function**. Llamarla no ejecuta nada: devuelve
+un objeto coroutine que el event loop puede planificar.
 
 ```python
-async def saludar(nombre: str) -> str:
-    return f"Hola, {nombre}"
+async def fetch_clima(ciudad: str) -> dict:
+    await anyio.sleep(0.3)   # simula I/O — cede el control aquí
+    return {"ciudad": ciudad, "temp": 18}
 
-resultado = saludar("Ana")  # NO ejecuta nada — retorna <coroutine object>
-print(resultado)             # <coroutine object saludar at 0x...>
+# Esto NO ejecuta fetch_clima:
+coro = fetch_clima("Valencia")   # <coroutine object fetch_clima at 0x...>
 ```
 
-Para ejecutar la coroutine, necesitas un **event loop** que la planifique y un `await`
-que la espere:
+Para ejecutarla, necesitas `await` dentro de otra coroutine, o `anyio.run()` como
+punto de entrada:
 
 ```python
 import anyio
 
 async def main() -> None:
-    mensaje = await saludar("Ana")  # ahora sí ejecuta
-    print(mensaje)                  # Hola, Ana
+    datos = await fetch_clima("Valencia")   # ahora sí ejecuta
+    print(datos)
 
-anyio.run(main)
+anyio.run(main)   # lanza el event loop y bloquea hasta que main() termina
 ```
 
-### await — ceder el control al event loop
+### Qué hace await
 
 `await` hace dos cosas:
 
 1. Inicia la ejecución de la coroutine indicada.
-2. Suspende la coroutine actual hasta que la otra termine, **devolviendo el control al
-   event loop** para que planifique otras tareas mientras espera.
-
-```python
-import anyio
-
-async def tarea_lenta() -> str:
-    await anyio.sleep(1)  # suspende esta coroutine 1 segundo
-    return "listo"
-
-async def main() -> None:
-    resultado = await tarea_lenta()
-    print(resultado)
-
-anyio.run(main)
-```
-
-Durante el `await anyio.sleep(1)`, el event loop puede ejecutar otras coroutines. Eso
-es la concurrencia.
-
-### anyio.run() como punto de entrada
-
-`anyio.run()` es la forma de lanzar el event loop desde código síncrono. Recibe la
-coroutine principal y la ejecuta hasta que termina:
-
-```python
-import anyio
-
-async def main() -> None:
-    print("inicio")
-    await anyio.sleep(0.1)
-    print("fin")
-
-anyio.run(main)  # bloquea hasta que main() termina
-```
-
-Solo se llama una vez, como punto de entrada del programa. Dentro de una coroutine ya
-en ejecución, no vuelves a llamar `anyio.run()`.
+2. Suspende la coroutine actual hasta que la otra termina, **devolviendo el control
+   al event loop** para que pueda ejecutar otras tareas mientras espera.
 
 ### Error común: olvidar await
 
-Si llamas a una coroutine sin `await`, Python no lanza un error inmediato: simplemente
-retorna el objeto coroutine sin ejecutarlo. Python sí emitirá un `RuntimeWarning`, pero
-el comportamiento silencioso hace que este bug sea difícil de rastrear.
+Si llamas a una coroutine sin `await`, Python no ejecuta nada y emite
+`RuntimeWarning: coroutine was never awaited`:
 
 ```python
-async def obtener_valor() -> int:
-    await anyio.sleep(0)
-    return 42
-
 async def main() -> None:
-    # MAL — resultado es un objeto coroutine, no 42
-    resultado = obtener_valor()
-    print(resultado)   # <coroutine object obtener_valor at 0x...>
-    # RuntimeWarning: coroutine 'obtener_valor' was never awaited
+    datos = fetch_clima("Valencia")   # MAL: datos es <coroutine object>
+    print(datos["temp"])              # KeyError — no es un dict
 
-    # BIEN — resultado es 42
-    resultado = await obtener_valor()
-    print(resultado)   # 42
+    datos = await fetch_clima("Valencia")   # BIEN: datos es {"ciudad": ..., "temp": 18}
 ```
 
-Regla: si una función es `async def`, siempre se llama con `await`.
+Regla: si la función es `async def`, siempre se llama con `await`.
+
+---
 
 ▶ Ejecuta el ejemplo:
-  uv run scripts/clase_05/conceptos/01_async_await_basico.py
+  uv run python scripts/clase_05/conceptos/01_async_await_basico.py
+
+---
+
+### Análisis de 01_async_await_basico.py
+
+El script tiene dos coroutines y un `main()` que las llama en secuencia.
+
+**Por qué los delays son distintos (0.1s y 2.0s):**
+`fetch_cache` simula una consulta a Redis — muy rápida, casi local.
+`fetch_api_externa` simula una llamada a una API de terceros — lenta por red.
+La diferencia hace visible la asimetría real que existe en cualquier sistema.
+
+**Qué significa "secuencial intencional":**
+El comentario en `main()` dice que las dos llamadas son secuenciales adrede.
+`await fetch_cache(...)` bloquea `main()` hasta que termina; solo entonces
+empieza `await fetch_api_externa(...)`. El event loop *podría* ejecutar otras
+coroutines durante esos awaits, pero aquí no hay otras: están solas.
+
+**Por qué el tiempo total es ~2.1s:**
+Es la suma de ambos delays: 0.1s + 2.0s = 2.1s. Esto es lo característico de
+la ejecución secuencial. Si las dos coroutines corrieran en paralelo, el tiempo
+sería el máximo de los dos: ~2.0s.
+
+**Qué cambia en la sección 3:**
+`create_task_group()` permite lanzar ambas coroutines al mismo tiempo. En ese
+caso, el tiempo total pasa de la suma al máximo — esa es la ganancia de la
+concurrencia.
 
 ---
 
@@ -153,184 +134,175 @@ Regla: si una función es `async def`, siempre se llama con `await`.
 
 ### Por qué anyio
 
-Python tiene `asyncio` en la librería estándar, y existe también `trio`, una alternativa
-con principios de diseño más estrictos. `anyio` es una capa de compatibilidad sobre
-ambos: escribe tu código una vez, y funciona sobre cualquiera de los dos backends.
+Python tiene `asyncio` en la librería estándar. `anyio` es una capa sobre
+`asyncio` (y `trio`) que ofrece:
 
-Las razones prácticas para usar `anyio`:
-
-- **Backend agnostic**: funciona con `asyncio` (default) y con `trio`.
-- **API ergonómica**: `create_task_group()` es más claro que `asyncio.gather()`.
-- **Compatible con FastAPI**: FastAPI usa `anyio` internamente; tu código async se
-  integra sin fricciones.
-- **Concurrencia estructurada**: las tareas hijas no pueden escapar de su scope.
+- **API más ergonómica**: `create_task_group()` es más claro que `asyncio.gather()`.
+- **Backend-agnostic**: el mismo código funciona sobre `asyncio` o `trio`.
+- **Compatible con FastAPI**: FastAPI usa `anyio` internamente.
 
 ### create_task_group() — tareas que no se escapan
 
-La concurrencia estructurada significa que las tareas hijas viven dentro del scope
-que las creó. Cuando el bloque `async with create_task_group()` termina, todas las
-tareas hijas han terminado (o han fallado). No hay tareas "flotando" en el background.
+La concurrencia estructurada garantiza que las tareas hijas no sobreviven al bloque
+que las creó. Cuando sale del `async with`, todas han terminado o fallado:
 
 ```python
 import anyio
 
-async def tarea(nombre: str, segundos: float) -> None:
-    await anyio.sleep(segundos)
-    print(f"{nombre} terminó tras {segundos}s")
-
 async def main() -> None:
     async with anyio.create_task_group() as tg:
-        tg.start_soon(tarea, "A", 2)
-        tg.start_soon(tarea, "B", 1)
-        tg.start_soon(tarea, "C", 3)
-    # aquí, las tres tareas han terminado
-    print("todas terminaron")
-
-anyio.run(main)
-# B terminó tras 1s
-# A terminó tras 2s
-# C terminó tras 3s
-# todas terminaron
+        tg.start_soon(fetch_clima, "Valencia")
+        tg.start_soon(fetch_ruta, "Alicante", "Madrid")
+    # aquí ambas tareas han terminado — el tiempo es el máximo, no la suma
 ```
-
-El tiempo total es aproximadamente 3 segundos (el máximo), no 6 (la suma). Las tres
-tareas corren de forma concurrente.
 
 ### Patrón del dict compartido para recoger resultados
 
-`start_soon()` no retorna el valor de la tarea. Para recoger resultados, el patrón
-habitual es pasar un diccionario compartido que cada tarea rellena:
+`start_soon()` no retorna el valor de la tarea. Para recoger resultados, se pasa
+un diccionario compartido que cada tarea rellena:
 
 ```python
-import anyio
-
-async def obtener_dato(clave: str, resultados: dict[str, int]) -> None:
-    await anyio.sleep(0.5)            # simula I/O
-    resultados[clave] = len(clave)    # escribe el resultado
-
 async def main() -> None:
-    resultados: dict[str, int] = {}
+    resultados: dict[str, Any] = {}
+
     async with anyio.create_task_group() as tg:
-        tg.start_soon(obtener_dato, "python", resultados)
-        tg.start_soon(obtener_dato, "async", resultados)
-        tg.start_soon(obtener_dato, "anyio", resultados)
-    # el dict está completo aquí
-    print(resultados)  # {'python': 6, 'async': 5, 'anyio': 5}
+        tg.start_soon(_fetch_clima, "Valencia", resultados)
+        tg.start_soon(_fetch_ruta, "Alicante", "Madrid", resultados)
 
-anyio.run(main)
+    # el dict está completo aquí
+    clima = resultados["clima"]
+    ruta = resultados["ruta"]
 ```
 
-### Error handling: ExceptionGroup
+### ExceptionGroup y except*
 
-Si una tarea lanza una excepción, el task group cancela las demás tareas y propaga el
-error. Si múltiples tareas fallan, las excepciones se agrupan en un `ExceptionGroup`
-(introducido en Python 3.11):
+Si una tarea lanza una excepción, el task group cancela las demás y agrupa los
+errores en un `ExceptionGroup`. Para capturarlo se usa `except*` (Python 3.11+):
 
 ```python
-import anyio
-
-async def tarea_que_falla(nombre: str) -> None:
-    await anyio.sleep(0.1)
-    raise ValueError(f"fallo en {nombre}")
-
-async def main() -> None:
-    try:
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(tarea_que_falla, "A")
-            tg.start_soon(tarea_que_falla, "B")
-    except* ValueError as eg:
-        for exc in eg.exceptions:
-            print(f"capturada: {exc}")
-
-anyio.run(main)
+try:
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(tarea_a)
+        tg.start_soon(tarea_b)
+except* RuntimeError as eg:
+    for exc in eg.exceptions:
+        print(f"Falló: {exc}")
 ```
 
-La sintaxis `except*` (Python 3.11+) maneja `ExceptionGroup`. En versiones anteriores,
-`anyio` envuelve las excepciones de forma compatible.
+`except*` es distinto de `except`: puede capturar grupos de excepciones y sigue
+ejecutando el resto del `for` aunque haya varias.
+
+---
 
 ▶ Ejecuta el ejemplo:
-  uv run scripts/clase_05/conceptos/02_anyio_task_group.py
+  uv run python scripts/clase_05/conceptos/02_anyio_task_group.py
+
+---
+
+### Análisis de 02_anyio_task_group.py
+
+El script lanza tres servicios en paralelo con latencias distintas y demuestra
+qué ocurre cuando uno falla.
+
+**Por qué los tres servicios tienen latencias distintas (2.0s, 1.5s, 0.5s):**
+Se elige que `Ollama_Fallback` sea el más rápido (0.5s) para que su fallo
+ocurra mientras los otros dos siguen trabajando. Si todos fallaran al mismo
+tiempo no se vería la cancelación en cascada.
+
+**Por qué OpenWeather y OpenRoute se cancelan:**
+Cuando `Ollama_Fallback` lanza `RuntimeError` a los 0.5s, `create_task_group()`
+cancela inmediatamente todas las tareas que siguen activas. OpenRoute llevaba
+0.5s de sus 1.5s; OpenWeather llevaba 0.5s de sus 2.0s. Ambas reciben la señal
+de cancelación y se interrumpen.
+
+**Qué hace `except anyio.get_cancelled_exc_class()` y por qué es CRÍTICO relanzar:**
+Cada tarea tiene un `try/except` que captura la excepción de cancelación para
+poder loguear un mensaje. Pero después del `logger.warning(...)` hay un `raise`
+obligatorio. Si no se relanza, anyio interpreta que la tarea terminó limpiamente:
+el task group no sabe que fue cancelada, y el mecanismo de structured concurrency
+se rompe. El `raise` le dice a anyio "sigo siendo una cancelación, propaga esto".
+
+**Qué pasaría si se quitara el `raise`:**
+`fetch_service` terminaría sin error aunque hubiera sido cancelada. El task group
+esperaría a que todas las tareas terminaran "correctamente", y el `RuntimeError`
+de `Ollama_Fallback` podría perderse o comportarse de forma impredecible.
+
+**Por qué `except* RuntimeError` en lugar de `except RuntimeError`:**
+anyio envuelve las excepciones en un `ExceptionGroup`. `except RuntimeError` no
+captura un `ExceptionGroup` que contiene `RuntimeError`; `except*` sí. El `for`
+sobre `eg.exceptions` itera cada excepción individualmente.
 
 ---
 
 ## 4. httpx.AsyncClient — Cliente HTTP Asíncrono
 
-### Diferencia con httpx.Client
+### httpx.Client vs httpx.AsyncClient
 
-`httpx` ofrece dos interfaces:
-
-- `httpx.Client` — síncrona. Los métodos `get()`, `post()`, etc. bloquean el hilo
-  hasta recibir la respuesta.
-- `httpx.AsyncClient` — asíncrona. Los métodos son coroutines: deben llamarse con
-  `await` y ceden el control al event loop mientras esperan.
+`httpx` ofrece dos interfaces con la misma API:
 
 ```python
-# Síncrono — bloquea el hilo
-import httpx
-
+# Síncrono — bloquea el hilo hasta recibir respuesta
 with httpx.Client() as client:
-    respuesta = client.get("https://httpbin.org/get")
-    datos = respuesta.json()
+    respuesta = client.get("https://api.openweathermap.org/...")
 
-# Asíncrono — cede el control mientras espera
-import httpx
-import anyio
-
-async def main() -> None:
-    async with httpx.AsyncClient() as client:
-        respuesta = await client.get("https://httpbin.org/get")
-        datos = respuesta.json()
-
-anyio.run(main)
+# Asíncrono — cede el event loop mientras espera
+async with httpx.AsyncClient() as client:
+    respuesta = await client.get("https://api.openweathermap.org/...")
 ```
 
-La interfaz es casi idéntica; la diferencia está en `async with` y `await`.
+La diferencia es `async with` y `await`. La interfaz, los parámetros y el manejo
+de errores son idénticos.
 
-### async with httpx.AsyncClient()
+### async with — cierre garantizado
 
-`httpx.AsyncClient` es un context manager asíncrono. Al usarlo con `async with`,
-garantiza que la conexión se cierra correctamente al salir del bloque, incluso si
-ocurre una excepción:
+`httpx.AsyncClient` es un context manager asíncrono. `async with` garantiza que
+la conexión se cierra correctamente al salir del bloque, incluso si ocurre una
+excepción. Es el equivalente async de `with httpx.Client()`.
 
-```python
-async def obtener_json(url: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        respuesta = await client.get(url)
-        respuesta.raise_for_status()
-        return respuesta.json()
-```
+### Connection pooling y Keep-Alive
 
-Si necesitas hacer múltiples requests en la misma función, usa el mismo cliente:
-no crees uno nuevo por cada llamada.
+`AsyncClient` mantiene un pool de conexiones TCP abiertas y las reutiliza. Si
+creas un cliente nuevo por cada request, cada llamada paga el coste de establecer
+la conexión (y el TLS handshake si es HTTPS: ~150ms extra). Con un cliente
+compartido, solo se paga una vez.
 
-### Connection pooling en modo async
+La regla: **un solo cliente para toda la vida de la función**. No crear uno por
+cada coroutine.
 
-`httpx.AsyncClient` mantiene un **pool de conexiones**: reutiliza las conexiones TCP
-abiertas en lugar de crear una nueva para cada request. Esto reduce la latencia y el
-consumo de recursos.
-
-Cuando usas `AsyncClient` dentro de un task group para hacer múltiples requests
-concurrentes, todas esas requests comparten el pool:
-
-```python
-async def main() -> None:
-    resultados: dict[str, dict] = {}
-
-    async def fetch(nombre: str, url: str, client: httpx.AsyncClient) -> None:
-        respuesta = await client.get(url)
-        resultados[nombre] = respuesta.json()
-
-    async with httpx.AsyncClient() as client:
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(fetch, "a", "https://httpbin.org/get?q=1", client)
-            tg.start_soon(fetch, "b", "https://httpbin.org/get?q=2", client)
-            tg.start_soon(fetch, "c", "https://httpbin.org/get?q=3", client)
-
-anyio.run(main)
-```
+---
 
 ▶ Ejecuta el ejemplo:
-  uv run scripts/clase_05/conceptos/03_httpx_async_client.py
+  uv run python scripts/clase_05/conceptos/03_httpx_async_client.py
+
+---
+
+### Análisis de 03_httpx_async_client.py
+
+El script descarga 5 posts de una API pública en paralelo, valida cada respuesta
+con Pydantic y muestra el resultado.
+
+**Por qué un único cliente compartido entre las 5 tareas:**
+El cliente se crea en `main()` antes del task group y se pasa a cada llamada de
+`fetch_post`. Así las 5 coroutines comparten el mismo pool de conexiones. Si cada
+`fetch_post` creara su propio `AsyncClient`, habría 5 handshakes TLS en lugar de
+uno. El comentario en el código lo explica explícitamente.
+
+**Qué hace `Post.model_validate(response.json())`:**
+`response.json()` devuelve un `dict` en crudo. `model_validate()` lo parsea y
+valida contra el modelo `Post`: comprueba que existan los campos `id` (int) y
+`title` (str) con los tipos correctos. Si la API devuelve algo inesperado, lanza
+`ValidationError` en lugar de un `KeyError` misterioso varias líneas después.
+Es el mismo patrón de contratos que usamos en `src/pycommute`.
+
+**Qué pasa si no hay internet:**
+Cada `fetch_post` tiene un `except httpx.HTTPError` que captura cualquier error
+de red y logua un mensaje de error sin propagar la excepción. El task group
+continúa con las tareas restantes. El script termina sin traceback.
+
+**Por qué los posts llegan en orden distinto cada vez:**
+Las 5 coroutines se lanzan casi al mismo tiempo y cada una espera la respuesta
+de la red. La que recibe respuesta primero logua primero. El orden depende de
+la latencia de cada request en cada ejecución — no hay nada determinista.
 
 ---
 
@@ -338,178 +310,168 @@ anyio.run(main)
 
 ### Por qué async es más rápido para I/O bound
 
-Cuando haces múltiples peticiones HTTP de forma **secuencial**, el tiempo total es la
-suma de todos los tiempos individuales: si cada request tarda 300ms y haces 5, esperas
-1.5 segundos.
-
-Con async y un task group, las peticiones se lanzan de forma **concurrente**: mientras
-una espera la respuesta, las otras también están esperando en paralelo. El tiempo total
-se aproxima al máximo de los tiempos individuales: esos mismos 5 requests tardan
-aproximadamente 300ms.
+En modo síncrono, cada petición HTTP espera a que la anterior termine. El tiempo
+total es la suma de todas las esperas:
 
 ```
-Secuencial:  |--req1--|--req2--|--req3--|--req4--|--req5--|
-             0ms                                        1500ms
-
-Concurrente: |--req1--|
-             |--req2--|
-             |--req3--|
-             |--req4--|
-             |--req5--|
-             0ms      300ms
+Síncrono:   |----req1----|----req2----|----req3----|----req4----|----req5----|
+            0s                                                              5s
 ```
 
-### Secuencial: tiempo = suma
+En modo async con task group, todas las peticiones se lanzan a la vez. Cada una
+espera su respuesta de forma independiente. El tiempo total es el máximo, no la
+suma:
+
+```
+Asíncrono:  |----req1----|
+            |----req2----|
+            |----req3----|
+            |----req4----|
+            |----req5----|
+            0s           ~1s
+```
+
+Con 5 requests de 1s cada una: síncrono tarda ~5s, asíncrono tarda ~1s. La
+ganancia escala con el número de requests independientes.
+
+---
+
+▶ Ejecuta el ejemplo (tarda ~6s en total — es intencional):
+  uv run python scripts/clase_05/conceptos/04_sync_vs_async_benchmark.py
+
+---
+
+### Análisis de 04_sync_vs_async_benchmark.py
+
+El script hace 5 peticiones reales a `httpbin.org/delay/1` — un endpoint que
+tarda exactamente 1 segundo en responder — primero en modo síncrono y luego en
+modo asíncrono.
+
+**Por qué `logger.error()` para el tiempo síncrono:**
+`logger.error()` muestra el mensaje en rojo en la mayoría de terminales. No es
+un error real: es una elección visual deliberada para que el tiempo síncrono
+destaque como "malo" frente al tiempo asíncrono. `logger.warning()` para el
+inicio síncrono y `logger.success()` para el asíncrono refuerzan el mismo
+contraste visual.
+
+**Por qué `logger.success()` para el asíncrono:**
+El verde de `success` comunica "esto es lo correcto" sin necesidad de texto
+adicional. El output del script es una demostración visual, no solo numérica.
+
+**Qué significa `PETICIONES = 5` y qué pasaría con 10:**
+Con `PETICIONES = 5` el síncrono tarda ~5s y el asíncrono ~1s. Si se cambia a
+`PETICIONES = 10`, el síncrono tardaría ~10s y el asíncrono seguiría tardando
+~1s: la ganancia en absoluto crece linealmente, pero el asíncrono no empeora
+porque las 10 peticiones corren en paralelo.
+
+**Por qué se elimina el handler de loguru al inicio:**
+Las dos líneas al final del script hacen esto:
 
 ```python
-import time
-import httpx
-
-URLS = [f"https://httpbin.org/delay/0.3" for _ in range(5)]
-
-inicio = time.perf_counter()
-with httpx.Client() as client:
-    for url in URLS:
-        client.get(url)
-total = time.perf_counter() - inicio
-print(f"Secuencial: {total:.2f}s")  # ~1.5s
+logger.remove()
+logger.add(sys.stderr, format="<level>{message}</level>")
 ```
 
-### Concurrente: tiempo ≈ máximo
-
-```python
-import time
-import httpx
-import anyio
-
-async def main() -> None:
-    async def fetch(url: str, client: httpx.AsyncClient) -> None:
-        await client.get(url)
-
-    inicio = time.perf_counter()
-    async with httpx.AsyncClient() as client:
-        async with anyio.create_task_group() as tg:
-            for url in URLS:
-                tg.start_soon(fetch, url, client)
-    total = time.perf_counter() - inicio
-    print(f"Concurrente: {total:.2f}s")  # ~0.3s
-
-anyio.run(main)
-```
-
-La diferencia crece con el número de requests: a 20 requests de 300ms cada una,
-secuencial tarda 6 segundos; concurrente sigue tardando ~300ms.
-
-▶ Ejecuta el ejemplo:
-  uv run scripts/clase_05/conceptos/04_sync_vs_async_benchmark.py
+El handler por defecto de loguru incluye timestamp, módulo y nivel en cada línea.
+Para esta demo, ese formato ensancha el output y distrae del tiempo. El nuevo
+handler solo muestra el mensaje con el color de nivel — más limpio para una
+comparación visual.
 
 ---
 
 ## 6. Tests Async con @pytest.mark.anyio
 
-### Por qué los tests síncronos no funcionan con funciones async
+### Por qué un test síncrono no funciona con funciones async
 
-Un test síncrono que llama a una coroutine sin `await` obtiene un objeto coroutine,
-no el resultado:
+Llamar a una coroutine sin `await` devuelve el objeto coroutine, no el resultado.
+Un test síncrono que haga esto nunca compara el valor real:
 
 ```python
-# MAL — test síncrono con función async
-def test_mi_funcion_asincrona():
-    resultado = mi_funcion_async()  # retorna <coroutine>, no ejecuta nada
-    assert resultado == "esperado"  # siempre falla — compara coroutine con string
+# MAL — test síncrono intentando testar una función async
+def test_fetch_clima():
+    resultado = fetch_clima("Valencia")   # <coroutine object> — no ejecuta nada
+    assert resultado["temp"] == 18        # TypeError: 'coroutine' is not subscriptable
 ```
 
-Para ejecutar una coroutine en un test, necesitas un event loop. `pytest-anyio` lo
-gestiona automáticamente con el marker `@pytest.mark.anyio`.
+Para ejecutar la coroutine en un test se necesita un event loop. `pytest-anyio`
+lo gestiona automáticamente cuando el test es `async def` y lleva el marker
+`@pytest.mark.anyio`.
 
-### @pytest.mark.anyio + async def test
-
-```python
-import pytest
-import anyio
-
-async def sumar_con_delay(a: int, b: int) -> int:
-    await anyio.sleep(0)  # simula I/O asíncrono
-    return a + b
-
-@pytest.mark.anyio
-async def test_suma_asincrona():
-    resultado = await sumar_con_delay(2, 3)
-    assert resultado == 5
-```
-
-pytest-anyio crea un event loop para el test, ejecuta la coroutine, y lo cierra al
-finalizar. Cada test tiene su propio event loop limpio.
-
-### AsyncMock — mockear funciones y context managers async
-
-`unittest.mock.AsyncMock` es el equivalente asíncrono de `MagicMock`. Se usa para
-reemplazar coroutines y context managers async en los tests:
+### @pytest.mark.anyio
 
 ```python
-from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 @pytest.mark.anyio
-async def test_con_async_mock(mocker):
-    # Mockear una coroutine
-    mock_fetch = AsyncMock(return_value={"dato": 42})
-    mocker.patch("mi_modulo.fetch_datos", mock_fetch)
-
-    resultado = await mi_modulo.fetch_datos("url")
-    assert resultado == {"dato": 42}
-    mock_fetch.assert_awaited_once_with("url")
+async def test_fetch_clima():
+    resultado = await fetch_clima("Valencia")
+    assert resultado["temp"] == 18
 ```
 
-Para mockear un `async with` (context manager asíncrono), configura `__aenter__` y
-`__aexit__`:
+pytest-anyio crea un event loop limpio para el test, ejecuta la coroutine, y lo
+cierra al terminar. Cada test tiene su propio loop — no hay estado compartido
+entre tests.
+
+### AsyncMock — mockear una coroutine
+
+`AsyncMock` es el equivalente async de `MagicMock`. Cuando se `await`-ea, devuelve
+`return_value`. Permite aislar una función en el test sin ejecutar su lógica real:
 
 ```python
-mock_client = AsyncMock()
-mock_client.__aenter__.return_value = mock_client
-mock_client.__aexit__.return_value = None
-mock_client.get.return_value = MagicMock(json=lambda: {"ok": True})
-```
-
-`mocker.patch` de `pytest-mock` detecta automáticamente si el objeto a parchear es
-asíncrono y crea un `AsyncMock` en lugar de un `MagicMock`.
-
-### Qué mockear cuando se testa un orquestador
-
-Un **orquestador** es una función que coordina otras funciones: lanza tareas en
-paralelo, recoge resultados, maneja errores. Al testarlo, no quieres mockear `httpx`
-directamente —eso es detallar de implementación que puede cambiar. Quieres mockear
-las funciones que el orquestador llama.
-
-```python
-# orquestador.py
-async def obtener_multiples(claves: list[str]) -> dict[str, str]:
-    resultados: dict[str, str] = {}
-    async with anyio.create_task_group() as tg:
-        for clave in claves:
-            tg.start_soon(obtener_uno, clave, resultados)
-    return resultados
-```
-
-```python
-# test_orquestador.py
-import pytest
 from unittest.mock import AsyncMock
 
 @pytest.mark.anyio
-async def test_obtener_multiples(mocker):
-    # Mockear obtener_uno — no httpx, no el cliente
-    async def fake_obtener(clave: str, resultados: dict) -> None:
-        resultados[clave] = f"valor-{clave}"
+async def test_commute_llama_ambas_apis(monkeypatch):
+    mock_clima = AsyncMock(return_value={"temp": 18})
+    mock_ruta = AsyncMock(return_value={"duracion": 45})
+    monkeypatch.setattr("pycommute.services.commute.fetch_clima", mock_clima)
+    monkeypatch.setattr("pycommute.services.commute.fetch_ruta", mock_ruta)
 
-    mocker.patch("orquestador.obtener_uno", side_effect=fake_obtener)
+    resultado = await get_commute_info("Valencia", "A", "B")
 
-    resultado = await obtener_multiples(["a", "b"])
-    assert resultado == {"a": "valor-a", "b": "valor-b"}
+    mock_clima.assert_awaited_once()
+    mock_ruta.assert_awaited_once()
 ```
 
-Al mockear la función importada (no la librería externa), el test verifica la lógica
-de coordinación del orquestador sin depender de la implementación interna de cada tarea.
+`assert_awaited_once_with()` verifica que la coroutine fue llamada con `await`
+y con los argumentos exactos. `assert_called_once_with()` (el equivalente síncrono)
+no verificaría el `await`.
+
+---
 
 ▶ Ejecuta el ejemplo:
-  uv run scripts/clase_05/conceptos/05_tests_async.py
+  uv run python scripts/clase_05/conceptos/05_tests_async.py
+
+---
+
+### Análisis de 05_tests_async.py
+
+El script ejecuta tres patrones de testing async de forma secuencial, mostrando
+el output real de pytest en cada uno.
+
+**Qué hace `_run_pytest()` y por qué usa directorio temporal:**
+La función escribe el test en un archivo `test_demo.py` en un directorio temporal
+del sistema (`tempfile.TemporaryDirectory`) y lanza pytest sobre ese archivo via
+`subprocess.run()`. Se usa un directorio temporal para no contaminar el proyecto
+con archivos de test descartables. El directorio se borra automáticamente al
+salir del `with`.
+
+**Por qué `conftest.py` registra el plugin anyio explícitamente:**
+El `conftest.py` del proyecto en `tests/` no está en el path cuando pytest corre
+en un directorio temporal. Sin `pytest_plugins = ("anyio",)`, el marker
+`@pytest.mark.anyio` no existe y pytest falla con "unknown mark". Una línea en
+el conftest temporal es suficiente para registrar el plugin.
+
+**Qué hace `assert_awaited_once_with()` y cuándo usarlo:**
+Verifica dos cosas a la vez: que la coroutine fue llamada exactamente una vez y
+que fue `await`-eada con los argumentos especificados. Se usa cuando la función
+bajo test es un orquestador: no nos interesa su implementación interna, sino que
+llame a sus dependencias con los datos correctos.
+
+**Conexión con los tests reales del proyecto:**
+Los tests en `tests/unit/` usan exactamente los mismos patrones: `@pytest.mark.anyio`,
+`AsyncMock` para el cliente httpx, y `assert_awaited_once` para verificar que
+`get_weather` y `get_route` se llaman desde el orquestador.
+
+▶ Los tests async del proyecto están en `tests/unit/`:
+  uv run pytest tests/ -v

@@ -1,88 +1,56 @@
-"""Concepto 2 — Gemini: respuesta JSON estructurada.
+"""
+Salida estructurada nativa con google-genai y Pydantic V2.
 
-Demuestra:
-- Pedir JSON en el prompt con schema explicito
-- Parsear la respuesta con json.loads()
-- Limpiar el markdown si Gemini agrega ```json ... ```
-- Fallback simulado cuando no hay GOOGLE_API_KEY
+Demuestra cómo pedirle a Gemini que devuelva JSON válido conforme a un schema:
+  - Definir el contrato con BaseModel + Field (constraints incluidos)
+  - Pasar response_schema=CommuteAnalysis en GenerateContentConfig
+  - Validar la respuesta con model_validate_json en un solo paso
 
-Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_10/conceptos/02_gemini_structured_output.py
+El SDK acepta la clase BaseModel directamente como schema — no hace falta
+convertirla manualmente a JSON Schema.
 
-    # Linux
-    uv run scripts/clase_10/conceptos/02_gemini_structured_output.py
+Ejecutar (desde curso/):
+    uv run python scripts/clase_10/conceptos/02_gemini_structured_output.py
 """
 
-import json
 import os
 
 from dotenv import load_dotenv
-
-load_dotenv()
-api_key = os.getenv("GOOGLE_API_KEY", "")
-
-# Schema que le pedimos a Gemini — describe la estructura esperada
-SCHEMA = {
-    "ciudad": "string",
-    "temperatura_descripcion": "string",
-    "recomendacion": "string",
-    "llevar": "array de strings",
-}
-
-PROMPT = f"""
-Dado que en Valencia hay 13°C y esta nublado,
-responde UNICAMENTE con un JSON valido con esta estructura:
-{json.dumps(SCHEMA, ensure_ascii=False)}
-No agregues texto fuera del JSON.
-"""
+from google import genai
+from google.genai import types
+from loguru import logger
+from pydantic import BaseModel, Field
 
 
-def clean_json(raw: str) -> str:
-    """Elimina el markdown que Gemini agrega a veces (```json ... ```)."""
-    clean = raw.strip()
-    if clean.startswith("```"):
-        parts = clean.split("```")
-        clean = parts[1] if len(parts) > 1 else clean
-        if clean.startswith("json"):
-            clean = clean[4:]
-    return clean.strip()
-
-
-if not api_key:
-    # Fallback simulado — el script funciona sin API key
-    print("GOOGLE_API_KEY no configurada — respuesta simulada:")
-    simulada = {
-        "ciudad": "Valencia",
-        "temperatura_descripcion": "13°C, nublado",
-        "recomendacion": "Buen dia para caminar, lleva una chaqueta ligera",
-        "llevar": ["chaqueta ligera", "paraguas por si acaso"],
-    }
-    print(json.dumps(simulada, ensure_ascii=False, indent=2))
-else:
-    from google import genai
-
-    client = genai.Client(api_key=api_key)
-
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=PROMPT,
+class CommuteAnalysis(BaseModel):
+    recommended_mode: str = Field(
+        ..., description="Modo de transporte (ej. METRO, BICI)"
     )
+    risk_level: int = Field(..., ge=1, le=5, description="Nivel de riesgo del 1 al 5")
+    reasoning: str = Field(..., description="Explicación técnica breve")
 
-    raw = response.text
-    clean = clean_json(raw)
-    data = json.loads(clean)
 
-    print("Respuesta parseada:")
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+if __name__ == "__main__":
+    load_dotenv()  # Carga las variables del archivo .env
+    client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+    prompt = "Evalúa ir en moto por Madrid con lluvia intensa."
 
-# ── El patron que usamos en GeminiAdapter ───────────────────────────────────
-#
-# 1. Definir el schema como dict Python
-# 2. Incluirlo en el prompt con json.dumps()
-# 3. Pedir "UNICAMENTE JSON" — sin texto adicional
-# 4. Parsear con json.loads() despues de limpiar markdown
-# 5. Validar con Pydantic: AIRecommendation(**data)
-#
-# Si Gemini devuelve un campo inesperado, Pydantic lanza ValidationError
-# en la frontera — antes de que el dato invalido entre al sistema.
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                # El SDK acepta la clase BaseModel directamente — sin conversión manual
+                response_schema=CommuteAnalysis,
+            ),
+        )
+
+        # model_validate_json: parsea el string JSON y valida los tipos en un paso
+        analysis = CommuteAnalysis.model_validate_json(response.text)
+        logger.success(
+            f"Modo: {analysis.recommended_mode} | Riesgo: {analysis.risk_level}"
+        )
+
+    except Exception as e:
+        logger.error(f"Fallo de validación o red: {e}")

@@ -1,31 +1,30 @@
-"""Demo src layout — Clase 1, Concepto 2.
+"""
+Src Layout — Aislamiento del paquete durante el desarrollo
+===========================================================
+Muestra si el directorio actual está expuesto en sys.path,
+lo que indica si el paquete puede importarse directamente del disco
+(flat-layout, riesgo de import shadowing) o solo a través del
+entorno instalado (src-layout, comportamiento seguro).
 
-Muestra por qué el src layout garantiza imports correctos.
+Conceptos que ilustra:
+- Flat-layout: el directorio raíz está en sys.path → import sin instalar posible.
+- Src-layout: solo src/ está en sys.path vía el .pth del entorno instalado.
 
-Con src layout, Python solo puede importar el paquete si está
-correctamente instalado (via `uv sync`). Sin src layout, un
-`import pycommute` podría encontrar accidentalmente la carpeta
-local sin que el paquete esté instalado.
-
-Ejecuta este script con:
-    uv run scripts/clase_01/conceptos/02_src_layout_demo.py
+Ejecutar:
+    uv run python scripts/clase_01/conceptos/02_src_layout_demo.py
 """
 
-import importlib.util
 import sys
+from pathlib import Path
 
 
-def check_package(name: str) -> None:
-    spec = importlib.util.find_spec(name)
-    if spec is None:
-        print(f"{name}: NO encontrado")
-    else:
-        print(f"{name}: encontrado en {spec.origin}")
+def inspect_path():
+    current_dir = str(Path.cwd())
+    is_in_path = current_dir in sys.path
+
+    print(f"¿Directorio actual expuesto en sys.path?: {is_in_path}")
+    print("En un flat-layout esto sería True. Con src-layout, es mitigado.")
 
 
-print(f"Python ejecutándose desde: {sys.executable}")
-print()
-
-check_package("httpx")
-check_package("pycommute")
-check_package("paquete_inexistente")
+if __name__ == "__main__":
+    inspect_path()

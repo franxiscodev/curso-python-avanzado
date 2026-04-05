@@ -24,7 +24,8 @@ app = FastAPI(title="PyCommute API — Ejercicios Clase 12")
 # Añade a `app` una ruta GET en "/health" que retorne:
 #   {"status": "ok", "version": "1.0"}
 # No recibe parámetros.
-# Pista: repasa "Rutas básicas con FastAPI" en 01_conceptos.md
+# Pista: repasa la seccion 1 "FastAPI — framework ASGI" en 01_conceptos.md
+#        y el script scripts/clase_12/conceptos/01_fastapi_lifespan.py
 #
 # @app.get("/health")
 # def health_check() -> dict:
@@ -41,7 +42,8 @@ app = FastAPI(title="PyCommute API — Ejercicios Clase 12")
 #   - Reciba `units` como query parameter con valor por defecto "celsius"
 #   - Retorne un dict simulando datos de clima:
 #     {"city": city, "temperature": 22.5, "units": units, "description": "soleado"}
-# Pista: repasa "Path y query parameters" en 01_conceptos.md
+# Pista: repasa la seccion 1 "FastAPI — framework ASGI" en 01_conceptos.md
+#        y el script scripts/clase_12/conceptos/01_fastapi_lifespan.py
 #
 # @app.get("/weather/{city}")
 # def get_weather(city: str, units: str = "celsius") -> dict:
@@ -60,7 +62,8 @@ app = FastAPI(title="PyCommute API — Ejercicios Clase 12")
 #   - Si no, lanza HTTPException con status_code=401 y detail="Token inválido"
 # Luego añade una ruta GET "/protected" que use Depends(verify_token) y retorne:
 #   {"message": "Acceso autorizado", "token": <el token>}
-# Pista: repasa "Depends() e inyección de dependencias" en 01_conceptos.md
+# Pista: repasa la seccion 3 "Depends() — inyeccion de dependencias" en 01_conceptos.md
+#        y el script scripts/clase_12/conceptos/02_depends_pattern.py
 #
 # def verify_token(x_api_token: str = Header(...)) -> str:
 #     pass  # ← reemplazar con tu implementación
@@ -81,7 +84,7 @@ app = FastAPI(title="PyCommute API — Ejercicios Clase 12")
 #   c) GET /protected sin token retorna status 422 (header requerido faltante)
 #   d) GET /protected con header X-Api-Token: secreto-123 retorna status 200
 # Imprime PASS o FAIL para cada verificación.
-# Pista: repasa "TestClient y pruebas de integración" en 01_conceptos.md
+# Pista: repasa la seccion 6 "Testing con TestClient" en 01_conceptos.md
 def run_tests() -> None:
     client = TestClient(app)
     print("=== Ejercicio 4: Tests con TestClient ===")
@@ -119,11 +122,11 @@ def demo() -> None:
     print("\n=== Ejercicio 3: GET /protected ===")
     try:
         resp_sin_token = client.get("/protected")
-        print(f"  Sin token → status {resp_sin_token.status_code}")
+        print(f"  Sin token -> status {resp_sin_token.status_code}")
         resp_token_malo = client.get("/protected", headers={"X-Api-Token": "malo"})
-        print(f"  Token malo → status {resp_token_malo.status_code}")
+        print(f"  Token malo -> status {resp_token_malo.status_code}")
         resp_token_ok = client.get("/protected", headers={"X-Api-Token": "secreto-123"})
-        print(f"  Token ok → status {resp_token_ok.status_code} — {resp_token_ok.json()}")
+        print(f"  Token ok -> status {resp_token_ok.status_code} - {resp_token_ok.json()}")
     except Exception as e:
         print(f"  Sin implementar aún: {e}")
 

@@ -58,7 +58,7 @@ def proveedor_intermitente() -> str:
 #   - Llamar a primaria()
 #   - Si lanza cualquier Exception, retornar valor_fallback
 #   - Si tiene éxito, retornar el resultado
-# Pista: repasa "Patrón fallback básico" en 01_conceptos.md
+# Pista: sección 4 (Patrón Fallback con reintentos) en 01_conceptos.md — bloque try/except de orchestrate_ai
 def con_fallback(primaria: Callable[[], str], valor_fallback: str) -> str:
     pass  # ← reemplazar con tu implementación
 
@@ -75,7 +75,7 @@ def con_fallback(primaria: Callable[[], str], valor_fallback: str) -> str:
 #     que intenta cada proveedor en orden, retorna el primer resultado exitoso,
 #     si todos fallan lanza RuntimeError("Todos los proveedores fallaron")
 # Nota: el parámetro `prompt` se ignora en este ejercicio (los proveedores son callables sin args)
-# Pista: repasa "Composición de proveedores" en 01_conceptos.md
+# Pista: sección 4 (Patrón Fallback con reintentos) en 01_conceptos.md — orchestrate_ai con múltiples proveedores
 class LLMCompuesto:
     def __init__(self, proveedores: list[Callable[[], str]]) -> None:
         pass  # ← reemplazar con tu implementación
@@ -95,7 +95,7 @@ class LLMCompuesto:
 #   - Si la excepción es TimeoutError, reintentar
 #   - Si es otro tipo de excepción, relanzarla inmediatamente (no reintentar)
 #   - Si se agotan todos los intentos con TimeoutError, retornar "timeout"
-# Pista: repasa "Reintentos selectivos por tipo de excepción" en 01_conceptos.md
+# Pista: sección 4 (Patrón Fallback con reintentos) en 01_conceptos.md — retry_if_exception_type en tenacity
 def con_reintento_timeout(fn: Callable[[], str], max_intentos: int) -> str:
     pass  # ← reemplazar con tu implementación
 
@@ -112,7 +112,7 @@ def con_reintento_timeout(fn: Callable[[], str], max_intentos: int) -> str:
 #   - Retornar el resultado del primero que tenga éxito
 #   - Si todos fallan, lanzar RuntimeError("Todos los proveedores fallaron")
 # Diferencia con LLMCompuesto: es una función, no una clase, y no acepta prompt
-# Pista: repasa "cadena de responsabilidad" en 01_conceptos.md
+# Pista: sección 4 (Patrón Fallback con reintentos) en 01_conceptos.md — variación del patrón con *args
 def cadena_fallback(*proveedores: Callable[[], str]) -> str:
     pass  # ← reemplazar con tu implementación
 
@@ -127,7 +127,7 @@ def demo() -> None:
     resultado_caido = con_fallback(proveedor_falla, "valor_de_emergencia")
     if resultado_ok is not None:
         print(f"  Proveedor ok: {resultado_ok}")
-        print(f"  Proveedor caído → fallback: {resultado_caido}")
+        print(f"  Proveedor caido -> fallback: {resultado_caido}")
     else:
         print("  Sin implementar aún.")
 
@@ -145,7 +145,7 @@ def demo() -> None:
     print("\n=== Ejercicio 3: con_reintento_timeout ===")
     resultado_timeout = con_reintento_timeout(proveedor_lento, max_intentos=3)
     if resultado_timeout is not None:
-        print(f"  TimeoutError agotado → '{resultado_timeout}'")
+        print(f"  TimeoutError agotado -> '{resultado_timeout}'")
     else:
         print("  Sin implementar aún.")
     try:
@@ -164,7 +164,7 @@ def demo() -> None:
     try:
         cadena_fallback(proveedor_falla, proveedor_lento)
     except RuntimeError as e:
-        print(f"  Todos fallaron → RuntimeError: {e}")
+        print(f"  Todos fallaron -> RuntimeError: {e}")
     except Exception:
         print("  Sin implementar aún.")
 

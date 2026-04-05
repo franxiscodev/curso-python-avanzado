@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 #   - temperatura: float
 #   - humedad: int
 #   - descripcion: str
-# Pista: repasa "BaseModel — la unidad básica de Pydantic V2" en 01_conceptos.md
+# Pista: sección 1 (BaseModel y coerción de tipos) en 01_conceptos.md
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 #   - temperatura: float con ge=-50 y le=60 (entre -50 y 60 grados)
 #   - humedad: int con ge=0 y le=100
 #   - descripcion: str con min_length=3
-# Pista: repasa "Field con restricciones" en 01_conceptos.md
+# Pista: sección 1 (Field — constraints declarativos) en 01_conceptos.md
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 #   - Retorna el valor normalizado
 # Ejemplo: CiudadNormalizada(nombre="  valencia  ", pais="ESPAÑA")
 #          → nombre="Valencia", pais="España"
-# Pista: repasa "@field_validator" en 01_conceptos.md
+# Pista: sección 2 (@field_validator — reglas de negocio por campo) en 01_conceptos.md
 class CiudadNormalizada(BaseModel):
     nombre: str
     pais: str
@@ -74,7 +74,7 @@ class CiudadNormalizada(BaseModel):
 # Añade un @model_validator(mode="after") que:
 #   - Verifica que temp_min <= temp_max
 #   - Si no, lanza ValueError("temp_min no puede ser mayor que temp_max")
-# Pista: repasa "@model_validator" en 01_conceptos.md
+# Pista: sección 3 (@model_validator — validación entre múltiples campos) en 01_conceptos.md
 class RangoTemperatura(BaseModel):
     ciudad: str
     temp_min: float
@@ -97,7 +97,7 @@ class RangoTemperatura(BaseModel):
 # Ejemplo:
 #   e1 = EstacionMeteo(id="ES001", name="Valencia", elevation=12.5)
 #   e2 = EstacionMeteo(station_id="ES001", station_name="Valencia", elevation_m=12.5)
-# Pista: repasa "Alias y model_config" en 01_conceptos.md
+# Pista: sección 1 (Field con alias — mapeo de nombres externos) en 01_conceptos.md
 # from pydantic import ConfigDict  # ya disponible si lo necesitas
 
 

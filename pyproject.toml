@@ -20,7 +20,7 @@ dependencies = [
     # Clase 11 — IA local
     "ollama>=0.6.1",
     # Clase 12 — API REST
-    "fastapi>=0.111",
+    "fastapi[standard]>=0.111",
     "uvicorn[standard]>=0.30",
 ]
 
@@ -31,6 +31,8 @@ dev = [
     "ruff>=0.5",
     # Clase 4 — mocking pythonic
     "pytest-mock>=3.14",
+    # Clase 6 — demo de profiling con EmailStr
+    "email-validator>=2.3.0",
 ]
 
 [tool.uv]

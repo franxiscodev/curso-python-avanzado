@@ -1,52 +1,44 @@
-"""Concepto 1 — Gemini API: primera llamada.
+"""
+Cliente base de Gemini con el SDK google-genai.
 
-Demuestra:
-- Configurar el cliente con google-genai SDK
-- generate_content: prompt de texto, respuesta de texto
-- Fallback simulado cuando no hay GOOGLE_API_KEY
+Demuestra el patrón mínimo para conectar con la API:
+  - Leer GOOGLE_API_KEY del entorno (nunca hardcodeada)
+  - Crear genai.Client — un objeto por aplicación
+  - Hacer una llamada de prueba con client.models.generate_content
+  - Capturar APIError si la conexión falla
 
-Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_10/conceptos/01_gemini_basico.py
-
-    # Linux
-    uv run scripts/clase_10/conceptos/01_gemini_basico.py
+Ejecutar (desde curso/):
+    uv run python scripts/clase_10/conceptos/01_gemini_basico.py
 """
 
 import os
+import sys
 
-from dotenv import load_dotenv
+from google import genai
+from google.genai.errors import APIError
+from loguru import logger
 
-load_dotenv()
-api_key = os.getenv("GOOGLE_API_KEY", "")
 
-if not api_key:
-    # Fallback simulado — el script funciona sin API key
-    print("GOOGLE_API_KEY no configurada — demo con respuesta simulada")
-    print()
-    print("Prompt: 'Di Hola desde Gemini en espanol'")
-    print("Respuesta simulada: Hola desde Gemini!")
-    print()
-    print("Para usar la API real, agrega GOOGLE_API_KEY a tu .env")
-else:
-    from google import genai
+def initialize_modern_client() -> genai.Client:
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        logger.critical("GOOGLE_API_KEY no encontrada en el entorno.")
+        sys.exit(1)
 
-    # Cliente unico — recibe la API key en el constructor
-    client = genai.Client(api_key=api_key)
+    # genai.Client recibe la API key explícitamente — sin estado global
+    logger.info("Cliente moderno Gemini inicializado.")
+    return genai.Client(api_key=api_key)
 
-    # Llamada basica: prompt de texto → respuesta de texto
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents="Di 'Hola desde Gemini' en espanol",
-    )
-    print(f"Respuesta: {response.text}")
 
-# ── Que hace generate_content ────────────────────────────────────────────────
-#
-# generate_content() es la funcion mas simple de la API:
-# - Acepta un string como prompt
-# - Devuelve un objeto con .text (la respuesta como string)
-# - Es sincrona — para async usa client.aio.models.generate_content()
-#
-# El modelo "gemini-2.0-flash" es rapido y gratuito hasta cierto limite.
-# Para produccion: "gemini-1.5-pro" ofrece mejor calidad.
+if __name__ == "__main__":
+    client = initialize_modern_client()
+    try:
+        logger.debug("Enviando ping al modelo...")
+        # client.models.generate_content: punto de entrada unificado para todas las llamadas
+        response = client.models.generate_content(
+            model="gemini-2.5-flash", contents="Devuelve solo la palabra 'ACK'."
+        )
+        logger.success(f"Respuesta: {response.text.strip()}")
+    except APIError as e:
+        # APIError captura errores HTTP de la API (429, 400, 500...)
+        logger.error(f"Fallo en la comunicación con la API: {e.message}")

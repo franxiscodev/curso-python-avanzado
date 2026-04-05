@@ -1,68 +1,50 @@
-"""lru_cache — cachear resultados costosos.
+"""
+lru_cache — Evitar llamadas repetidas a la API del clima
+=========================================================
+Demuestra el patrón de memoización con @lru_cache: la primera petición
+por ciudad hace la llamada simulada (1.5s); las siguientes son instantáneas
+porque el resultado se sirve desde cache en memoria.
 
-Demuestra el patrón de memoización con functools.lru_cache usando
-fibonacci como ejemplo clásico. Sin imports de pycommute.
+Conceptos que ilustra:
+- @lru_cache(maxsize=128): decora obtener_clima_openweather; retiene los
+  resultados de las últimas 128 ciudades distintas (LRU eviction).
+- Cache hit vs cache miss: Madrid se consulta dos veces, la segunda es gratis.
+- cache_info(): expone hits, misses, maxsize y currsize del cache interno.
+- time.perf_counter(): mide el tiempo real de cada llamada para evidenciar
+  el ahorro del hit.
 
 Ejecutar:
-    uv run scripts/clase_06/conceptos/03_lru_cache.py
+    uv run python scripts/clase_06/conceptos/03_lru_cache.py
 """
-
 import time
 from functools import lru_cache
 
 
-# ── Sin cache — recalcula en cada llamada ────────────────────────
-def fibonacci_sin_cache(n: int) -> int:
-    """Fibonacci recursivo sin optimización — O(2^n) llamadas."""
-    if n < 2:
-        return n
-    return fibonacci_sin_cache(n - 1) + fibonacci_sin_cache(n - 2)
-
-
-# ── Con cache — cada resultado se recuerda ───────────────────────
 @lru_cache(maxsize=128)
-def fibonacci_con_cache(n: int) -> int:
-    """Fibonacci recursivo con memoización — O(n) llamadas únicas."""
-    if n < 2:
-        return n
-    return fibonacci_con_cache(n - 1) + fibonacci_con_cache(n - 2)
+def obtener_clima_openweather(ciudad: str) -> str:
+    """
+    Adaptador de OpenWeather.
+    maxsize=128 retendra las ultimas 128 ciudades diferentes en memoria.
+    """
+    print(f"[HTTP] Consultando API para {ciudad}...")
+    time.sleep(1.5)  # Simulamos latencia de red
+    return f"Clima actual en {ciudad}: Soleado, 24 grados"
 
 
-# ── Benchmark ────────────────────────────────────────────────────
-N = 35
+print("--- Flujo de Usuarios en PyCommute ---")
 
-inicio = time.perf_counter()
-resultado_sin = fibonacci_sin_cache(N)
-tiempo_sin = time.perf_counter() - inicio
+start = time.perf_counter()
+print("Usuario 1 pide:", obtener_clima_openweather("Madrid"))
+print(f"Tiempo: {time.perf_counter() - start:.4f}s\n")
 
-inicio = time.perf_counter()
-resultado_con = fibonacci_con_cache(N)
-tiempo_con = time.perf_counter() - inicio
+start = time.perf_counter()
+print("Usuario 2 pide:", obtener_clima_openweather("Valencia"))
+print(f"Tiempo: {time.perf_counter() - start:.4f}s\n")
 
-print(f"fibonacci({N}) = {resultado_sin}")
-print()
-print(f"Sin cache:  {tiempo_sin:.4f}s")
-print(f"Con cache:  {tiempo_con:.6f}s")
-if tiempo_con > 0:
-    print(f"Mejora:     {tiempo_sin / tiempo_con:.0f}x más rápido")
-print()
+start = time.perf_counter()
+# Aqui ocurre la magia. Misma entrada = respuesta instantanea sin red.
+print("Usuario 3 pide:", obtener_clima_openweather("Madrid"))
+print(f"Tiempo: {time.perf_counter() - start:.4f}s (CACHE HIT)\n")
 
-# ── Estadísticas del cache ───────────────────────────────────────
-info = fibonacci_con_cache.cache_info()
-print(f"cache_info():")
-print(f"  hits     = {info.hits}     (llamadas resueltas desde cache)")
-print(f"  misses   = {info.misses}     (llamadas que requirieron calculo)")
-print(f"  maxsize  = {info.maxsize}   (entradas maximas en cache)")
-print(f"  currsize = {info.currsize}     (entradas actuales)")
-print()
-
-# ── Limpiar cache ────────────────────────────────────────────────
-fibonacci_con_cache.cache_clear()
-info_limpio = fibonacci_con_cache.cache_info()
-print(f"Tras cache_clear(): hits={info_limpio.hits}, currsize={info_limpio.currsize}")
-print()
-print("Limitaciones de lru_cache:")
-print("  [NO] Solo funciona con argumentos hashables (no listas, no dicts)")
-print("  [NO] No expira automaticamente (TTL) -- cache permanente en proceso")
-print("  [NO] No se comparte entre procesos (no distribuido)")
-print("  [SI] Thread-safe en CPython")
+print("Metricas del Sistema de Cache:")
+print(obtener_clima_openweather.cache_info())

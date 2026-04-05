@@ -1,53 +1,49 @@
-"""async/await basico: secuencial vs paralelo.
+"""async/await basico: coroutines, await y anyio.sleep().
 
-Demuestra la diferencia entre ejecutar tareas una tras otra
-y ejecutarlas al mismo tiempo con anyio.create_task_group().
+Demuestra los fundamentos de async/await:
+- async def define una coroutine (no la ejecuta hasta que se await-ea)
+- await suspende la coroutine actual y cede el control al event loop
+- anyio.sleep() es el equivalente async de time.sleep() — no bloquea el loop
+- Las dos llamadas en main() son secuenciales: cada await espera a que
+  la anterior termine antes de continuar (la concurrencia real viene
+  en el script 02 con create_task_group).
 
 Ejecutar:
     uv run scripts/clase_05/conceptos/01_async_await_basico.py
 """
 
-import time
-
 import anyio
+import time
+from loguru import logger
 
 
-async def tarea_lenta(nombre: str, segundos: float) -> str:
-    """Simula una tarea que tarda 'segundos' en completarse (E/S simulada)."""
-    print(f"  {nombre}: iniciando ({segundos}s)")
-    await anyio.sleep(segundos)
-    print(f"  {nombre}: completada")
-    return f"{nombre} completada en {segundos}s"
+async def fetch_cache(ciudad: str) -> str:
+    logger.info(f"[{ciudad}] Buscando en caché local...")
+    await anyio.sleep(0.1)  # Simula latencia de Redis (I/O muy rápido)
+    return f"Caché hit para {ciudad}"
 
 
-async def secuencial() -> None:
-    """Ejecuta las tareas una tras otra — total = suma de tiempos."""
-    print("=== Ejecucion SECUENCIAL ===")
+async def fetch_api_externa(ciudad: str) -> str:
+    logger.info(f"[{ciudad}] Consultando API externa (lento)...")
+    await anyio.sleep(2.0)  # Simula latencia de red (I/O lento)
+    return f"Datos en vivo de {ciudad}"
+
+
+async def main():
     inicio = time.perf_counter()
 
-    await tarea_lenta("Tarea A", 0.5)
-    await tarea_lenta("Tarea B", 0.3)
+    # Secuencial intencional: cada await bloquea main() hasta que termina.
+    # El event loop puede correr otras coroutines durante cada await,
+    # pero aquí no hay otras — la concurrencia real llega con create_task_group().
+    res_cache = await fetch_cache("Valencia")
+    logger.success(res_cache)
 
+    res_api = await fetch_api_externa("Madrid")  # main() espera ~2.0s aquí
+    logger.success(res_api)
+
+    # Tiempo esperado: ~2.1s (suma de ambos delays) — eso es lo secuencial
     total = time.perf_counter() - inicio
-    print(f"Tiempo total: {total:.2f}s (esperado: ~0.80s)\n")
+    logger.info(f"Tiempo total: {total:.2f}s")
 
-
-async def paralela() -> None:
-    """Ejecuta las tareas en paralelo — total = maximo de tiempos."""
-    print("=== Ejecucion PARALELA (create_task_group) ===")
-    inicio = time.perf_counter()
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(tarea_lenta, "Tarea A", 0.5)
-        tg.start_soon(tarea_lenta, "Tarea B", 0.3)
-    # El bloque async with espera a que AMBAS tareas terminen
-
-    total = time.perf_counter() - inicio
-    print(f"Tiempo total: {total:.2f}s (esperado: ~0.50s)")
-    print()
-    print("La tarea de 0.3s termino ANTES que la de 0.5s — no habia que esperar.")
-    print("El task group termina cuando la ULTIMA tarea completa.")
-
-
-anyio.run(secuencial)
-anyio.run(paralela)
+if __name__ == "__main__":
+    anyio.run(main)

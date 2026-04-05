@@ -1,8 +1,11 @@
 """Benchmark: sincronico vs asincrono con peticiones HTTP reales.
 
-Hace N peticiones a httpbin.org/delay/0.3 — un endpoint que tarda
-300ms en responder — midiendo el tiempo total en modo sincrono y
-asincrono para mostrar el speedup de la concurrencia.
+Hace N peticiones a httpbin.org/delay/1 — un endpoint que tarda
+1 segundo en responder — midiendo el tiempo total en modo sincrono y
+asincrono para mostrar el speedup de la concurrencia:
+
+  Sincrono (secuencial): PETICIONES * 1s  → ~5s para 5 peticiones
+  Asincrono (paralelo):  ~1s sin importar cuantas peticiones haya
 
 Nota: requiere conexion a internet.
 
@@ -11,59 +14,46 @@ Ejecutar:
 """
 
 import time
-
-import anyio
 import httpx
+import anyio
+from loguru import logger
 
-URL = "https://httpbin.org/delay/0.3"  # tarda ~300ms por peticion
-N = 3
+URL = "https://httpbin.org/delay/1"
+PETICIONES = 5
 
 
-def sync_requests(n: int) -> float:
-    """Hace n peticiones de forma sincrona (secuencial)."""
-    inicio = time.perf_counter()
-    with httpx.Client(timeout=10.0) as client:
-        for i in range(n):
+def run_sync():
+    logger.warning("Iniciando modo SÍNCRONO (Bloqueante)...")
+    start = time.perf_counter()
+    with httpx.Client() as client:
+        for i in range(PETICIONES):
             client.get(URL)
-            print(f"  sync: peticion {i + 1}/{n} completada")
-    return time.perf_counter() - inicio
+            logger.info(f"Síncrono: Petición {i+1} completada.")
+    total = time.perf_counter() - start
+    logger.error(f"Tiempo total Síncrono: {total:.2f} segundos")
 
 
-async def async_requests(n: int) -> float:
-    """Hace n peticiones de forma asincrona (paralela)."""
-    inicio = time.perf_counter()
-    completadas = [0]  # lista para mutacion desde coroutines
-
-    async def fetch(i: int) -> None:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.get(URL)
-        completadas[0] += 1
-        print(f"  async: peticion {i + 1}/{n} completada")
-
-    async with anyio.create_task_group() as tg:
-        for i in range(n):
-            tg.start_soon(fetch, i)
-
-    return time.perf_counter() - inicio
+async def fetch(client: httpx.AsyncClient, i: int):
+    await client.get(URL)
+    logger.info(f"Asíncrono: Petición {i+1} completada.")
 
 
-print(f"Benchmark: {N} peticiones a {URL}")
-print(f"(cada peticion tarda ~300ms)\n")
+async def run_async():
+    logger.success("Iniciando modo ASÍNCRONO (Concurrente)...")
+    start = time.perf_counter()
+    async with httpx.AsyncClient() as client:
+        async with anyio.create_task_group() as tg:
+            for i in range(PETICIONES):
+                tg.start_soon(fetch, client, i)
+    total = time.perf_counter() - start
+    logger.success(f"Tiempo total Asíncrono: {total:.2f} segundos")
 
-print("--- Sincrono ---")
-t_sync = sync_requests(N)
-print(f"Tiempo total sincrono: {t_sync:.2f}s\n")
+if __name__ == "__main__":
+    # Removemos el handler por defecto de loguru para limpiar el output visual
+    import sys
+    logger.remove()
+    logger.add(sys.stderr, format="<level>{message}</level>")
 
-print("--- Asincrono ---")
-t_async = anyio.run(async_requests, N)
-print(f"Tiempo total asincrono: {t_async:.2f}s\n")
-
-print("--- Resultado ---")
-if t_async > 0:
-    speedup = t_sync / t_async
-    print(f"Speedup: {speedup:.1f}x mas rapido en modo asincrono")
-    print(f"Tiempo ahorrado: {t_sync - t_async:.2f}s")
-    print()
-    print("Por que:")
-    print(f"  Sincrono:  {N} x 0.3s = ~{N * 0.3:.1f}s (espera secuencial)")
-    print(f"  Asincrono: max(0.3s, 0.3s, ...) = ~0.3s (todas en paralelo)")
+    run_sync()
+    print("-" * 40)
+    anyio.run(run_async)

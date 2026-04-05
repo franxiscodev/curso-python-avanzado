@@ -24,7 +24,7 @@ from typing import Any
 #   - Retorna una lista con los `n` menores valores en orden ascendente
 #   - Usa heapq.heappush y heapq.heappop (NO uses sorted() ni heapq.nsmallest)
 # Ejemplo: n_menores([5, 2, 8, 1, 9, 3], 3) → [1, 2, 3]
-# Pista: repasa "heapq — cola de prioridad" en 01_conceptos.md
+# Pista: sección 2 (heapq — cola de prioridad con dataclass) en 01_conceptos.md
 def n_menores(valores: list[float], n: int) -> list[float]:
     pass  # ← reemplazar con tu implementación
 
@@ -41,7 +41,7 @@ def n_menores(valores: list[float], n: int) -> list[float]:
 #   - Retorna el deque resultante (que conservará solo los últimos maxlen items)
 # Ejemplo: historial_deslizante(range(10), maxlen=5)
 #          → deque([5, 6, 7, 8, 9], maxlen=5)
-# Pista: repasa "collections.deque — cola de doble extremo" en 01_conceptos.md
+# Pista: sección 4 (deque con maxlen — ring buffer para streams de datos) en 01_conceptos.md
 def historial_deslizante(items, maxlen: int) -> deque:
     pass  # ← reemplazar con tu implementación
 
@@ -65,7 +65,7 @@ def historial_deslizante(items, maxlen: int) -> deque:
 #   cola.insertar(1, "urgente")
 #   cola.insertar(2, "normal")
 #   cola.extraer()  → (1, "urgente")
-# Pista: repasa "Cola de prioridad con tuplas" en 01_conceptos.md
+# Pista: sección 1 (el patrón (prioridad, item) con heapq) en 01_conceptos.md
 class ColaPrioridad:
     def __init__(self) -> None:
         pass  # ← reemplazar con tu implementación
@@ -93,7 +93,7 @@ class ColaPrioridad:
 #     ordenadas de mayor a menor
 # Ejemplo: mejores_n_historial([3.0, 8.5, 1.2, 9.1, 4.7, 6.0], n=3)
 #          → [9.1, 8.5, 6.0]
-# Pista: combina deque (historial completo) con heapq.nlargest (top N)
+# Pista: sección 1 (heapq.nlargest) y sección 3 (deque — ventana deslizante) en 01_conceptos.md
 def mejores_n_historial(puntuaciones: list[float], n: int) -> list[float]:
     pass  # ← reemplazar con tu implementación
 
@@ -107,7 +107,7 @@ def demo() -> None:
     datos = [5.0, 2.0, 8.0, 1.0, 9.0, 3.0, 7.0]
     resultado = n_menores(datos, 3)
     if resultado is not None:
-        print(f"  {datos} → 3 menores: {resultado}")
+        print(f"  {datos} -> 3 menores: {resultado}")
     else:
         print("Sin implementar aún.")
 

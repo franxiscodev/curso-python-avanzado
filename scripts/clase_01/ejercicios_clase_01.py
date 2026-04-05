@@ -40,7 +40,7 @@ def _get_simulado(url: str) -> dict:
 # Implementa `fetch_json` que recibe una URL (str) y retorna un dict.
 # Debe llamar a `_get_simulado(url)` y retornar el resultado.
 # Type hints obligatorios en la firma.
-# Pista: repasa la sección "Type Hints" de 01_conceptos.md
+# Pista: sección 5 (Type Hints — TypedDict y Literal) en 01_conceptos.md
 def fetch_json(url: str) -> dict:
     pass  # ← reemplazar con tu implementación
 
@@ -54,7 +54,7 @@ def fetch_json(url: str) -> dict:
 #   - Lee la variable de entorno cuyo nombre recibe como parámetro (env_var: str)
 #   - Si no existe, retorna el valor de `default` (Optional[str], por defecto None)
 #   - Type hints completos en la firma
-# Pista: repasa la sección "python-dotenv y os.environ" de 01_conceptos.md
+# Pista: sección 6 (Variables de entorno y .env) en 01_conceptos.md
 def get_api_key(env_var: str, default: Optional[str] = None) -> Optional[str]:
     pass  # ← reemplazar con tu implementación
 
@@ -72,7 +72,7 @@ def get_api_key(env_var: str, default: Optional[str] = None) -> Optional[str]:
 #   }
 # y retorna un string con el formato:
 #   "Valencia: 22.5°C — cielo despejado"
-# Pista: repasa la sección "Anatomía del JSON de OpenWeather" de 01_conceptos.md
+# Pista: sección 4 (httpx — cliente HTTP con control de errores) en 01_conceptos.md
 def format_weather(data: dict) -> str:
     pass  # ← reemplazar con tu implementación
 

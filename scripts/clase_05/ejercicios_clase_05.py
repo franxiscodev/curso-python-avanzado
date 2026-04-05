@@ -73,7 +73,8 @@ async def ejecutar_en_paralelo() -> list[str]:
 #   - Recibe `clave: str` y `simular_error: bool = False`
 #   - Llama a `obtener_dato_seguro` en un try/except ValueError
 #   - Retorna el resultado o None si hubo error
-# Pista: repasa "Manejo de excepciones en código async" en 01_conceptos.md
+# Pista: repasa la sección 2 de 01_conceptos.md (async/await) para el patron
+#        async def + await, y la sección 3 para el manejo de errores en task groups.
 async def obtener_dato_seguro(clave: str, simular_error: bool = False) -> str:
     pass  # ← reemplazar con tu implementación
 

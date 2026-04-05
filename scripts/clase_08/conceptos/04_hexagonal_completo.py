@@ -1,124 +1,95 @@
-"""Concepto 04 — Arquitectura Hexagonal completa en miniatura.
+"""
+Concepto 4: Arquitectura Hexagonal completa con Pydantic V2.
 
-Hexagonal = Puertos + Adaptadores + Nucleo puro.
-Este ejemplo autocontenido simula la misma estructura de PyCommute
-en ~100 lineas sin dependencias externas.
+Muestra los cuatro componentes de la arquitectura juntos:
+
+  1. Entidad de dominio — CommuteResult (Pydantic BaseModel):
+     Contrato estricto de salida. AdviseService siempre devuelve
+     este tipo validado, nunca un dict libre.
+
+  2. Puerto — AIProviderPort (Protocol):
+     El Core solo conoce este contrato. No sabe si hay Gemini,
+     Ollama, un mock o cualquier otra cosa detrás.
+
+  3. Servicio — AdviseService (Core):
+     Recibe AIProviderPort por constructor. Orquesta la lógica:
+     construye el contexto, llama al proveedor, devuelve CommuteResult.
+
+  4. Adaptadores — GeminiAdapter / OllamaAdapter:
+     Ambos implementan AIProviderPort sin herencia.
+     "Cambiar de Gemini a Ollama es cambiar una línea" en el ensamblador:
+       ai_client = GeminiAdapter()   # produccion
+       ai_client = OllamaAdapter()   # fallback local
+
+Conexión con el proyecto:
+  En Clase 10 añadimos GeminiAdapter real. En Clase 11 añadimos
+  OllamaAdapter real. En Clase 11 también aparece FallbackAIAdapter
+  que usa ambos — posible gracias a que los dos implementan AIProviderPort.
+  CommuteResult aquí anticipa el contrato que Pydantic V2 formalizará
+  en Clase 09.
 
 Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_08/conceptos/04_hexagonal_completo.py
-
-    # Linux
-    uv run scripts/clase_08/conceptos/04_hexagonal_completo.py
+  uv run python scripts/clase_08/conceptos/04_hexagonal_completo.py
 """
 
-import asyncio
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol
+
+from pydantic import BaseModel, Field
 
 
-# ┌─────────────────────────────────────────────────────────────────────┐
-# │  PUERTOS — contratos definidos por el nucleo                        │
-# └─────────────────────────────────────────────────────────────────────┘
-
-@runtime_checkable
-class ClimaPort(Protocol):
-    async def obtener(self, ciudad: str) -> dict[str, Any]: ...
-
-
-@runtime_checkable
-class RutaPort(Protocol):
-    async def calcular(self, origen: str, destino: str) -> dict[str, Any]: ...
+# 1. ENTIDADES / MODELOS DE DOMINIO (Pydantic V2)
+class CommuteResult(BaseModel):
+    origin: str
+    destination: str
+    ai_recommendation: str = Field(..., description="Consejo de la IA")
+    is_safe: bool = Field(default=True)
 
 
-# ┌─────────────────────────────────────────────────────────────────────┐
-# │  ADAPTADORES — implementaciones concretas (simuladas)               │
-# └─────────────────────────────────────────────────────────────────────┘
-
-class ClimaFakeAdapter:
-    """Adaptador fake — simula una API de clima sin HTTP."""
-
-    _DATOS = {
-        "Valencia": {"temperatura": 22.0, "descripcion": "soleado"},
-        "Madrid":   {"temperatura": 28.0, "descripcion": "despejado"},
-    }
-
-    async def obtener(self, ciudad: str) -> dict[str, Any]:
-        return self._DATOS.get(ciudad, {"temperatura": 20.0, "descripcion": "sin datos"})
+# 2. PUERTOS (Interfaces)
+class AIProviderPort(Protocol):
+    def get_advice(self, context: str) -> str: ...
 
 
-class RutaFakeAdapter:
-    """Adaptador fake — simula una API de rutas sin HTTP."""
+# 3. CORE (Lógica de Negocio)
+class AdviseService:
+    def __init__(self, ai_provider: AIProviderPort):
+        self.ai = ai_provider
 
-    async def calcular(self, origen: str, destino: str) -> dict[str, Any]:
-        return {
-            "origen": origen,
-            "destino": destino,
-            "distancia_km": 350.0,
-            "duracion_min": 210,
-        }
+    def analyze_route(self, origin: str, dest: str) -> CommuteResult:
+        context = f"Ruta desde {origin} hasta {dest} con tráfico moderado."
 
+        # El Core orquesta, no implementa
+        advice = self.ai.get_advice(context)
 
-# ┌─────────────────────────────────────────────────────────────────────┐
-# │  SERVICIO (nucleo) — orquesta con inyeccion de dependencias         │
-# └─────────────────────────────────────────────────────────────────────┘
-
-class ViajeService:
-    """Servicio de nucleo — no conoce httpx, bases de datos ni APIs."""
-
-    def __init__(self, clima: ClimaPort, ruta: RutaPort) -> None:
-        self._clima = clima
-        self._ruta = ruta
-
-    async def planificar(self, origen: str, destino: str) -> dict[str, Any]:
-        """Consulta clima y ruta en paralelo, combina el resultado."""
-        clima_result: dict[str, Any] = {}
-        ruta_result: dict[str, Any] = {}
-
-        async def fetch_clima() -> None:
-            clima_result.update(await self._clima.obtener(origen))
-
-        async def fetch_ruta() -> None:
-            ruta_result.update(await self._ruta.calcular(origen, destino))
-
-        await asyncio.gather(fetch_clima(), fetch_ruta())
-        return {"clima": clima_result, "ruta": ruta_result}
+        # Retornamos un contrato estricto gracias a Pydantic
+        return CommuteResult(
+            origin=origin,
+            destination=dest,
+            ai_recommendation=advice,
+            is_safe="peligro" not in advice.lower(),
+        )
 
 
-# ┌─────────────────────────────────────────────────────────────────────┐
-# │  MAIN — composicion: quien elige los adaptadores                    │
-# └─────────────────────────────────────────────────────────────────────┘
-
-async def main() -> None:
-    print("=== Arquitectura Hexagonal completa ===")
-    print()
-
-    # Verificar contratos
-    clima_adapter = ClimaFakeAdapter()
-    ruta_adapter = RutaFakeAdapter()
-
-    print(f"ClimaFakeAdapter satisface ClimaPort: {isinstance(clima_adapter, ClimaPort)}")
-    print(f"RutaFakeAdapter satisface RutaPort:   {isinstance(ruta_adapter, RutaPort)}")
-    print()
-
-    # Construir el servicio con DI
-    service = ViajeService(clima=clima_adapter, ruta=ruta_adapter)
-
-    # Consulta completa
-    resultado = await service.planificar("Valencia", "Madrid")
-
-    clima = resultado["clima"]
-    ruta = resultado["ruta"]
-
-    print(f"Clima en Valencia: {clima['temperatura']}C, {clima['descripcion']}")
-    print(f"Ruta: {ruta['distancia_km']} km, {ruta['duracion_min']} min")
-    print()
-    print("Capas:")
-    print("  Puertos     -> ClimaPort, RutaPort        (contratos, sin implementacion)")
-    print("  Adaptadores -> ClimaFakeAdapter, RutaFakeAdapter (implementan puertos)")
-    print("  Servicio    -> ViajeService               (nucleo, solo logica)")
-    print()
-    print("ViajeService NO importa httpx, requests ni nada externo.")
-    print("Para produccion: sustituir adapters por versiones reales.")
+# 4. ADAPTADORES (Infraestructura)
+class GeminiAdapter:
+    def get_advice(self, context: str) -> str:
+        # Aquí iría la llamada real usando google-genai
+        return f"[Gemini 2.5 Flash] Sugiere salir 10 mins antes. Contexto: {context}"
 
 
-asyncio.run(main())
+class OllamaAdapter:
+    def get_advice(self, context: str) -> str:
+        # Fallback local
+        return f"[Gemma Local] Ruta despejada. Contexto: {context}"
+
+
+# 5. MAIN / APP (Ensamblaje)
+if __name__ == "__main__":
+    # Cambiar de Gemini a Ollama es literalmente cambiar una línea aquí
+    ai_client = GeminiAdapter()
+    service = AdviseService(ai_provider=ai_client)
+
+    result = service.analyze_route("Valencia", "Madrid")
+
+    print("=== Resultado Validado por Pydantic ===")
+    print(result.model_dump_json(indent=2))

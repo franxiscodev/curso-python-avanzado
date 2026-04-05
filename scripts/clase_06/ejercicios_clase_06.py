@@ -25,7 +25,7 @@ from typing import Generator, Iterator
 #   - Produce los primeros n números de Fibonacci: 0, 1, 1, 2, 3, 5, 8, ...
 #   - Retorna un Generator[int, None, None]
 # Ejemplo: list(fibonacci_gen(7)) → [0, 1, 1, 2, 3, 5, 8]
-# Pista: repasa "Generadores con yield" en 01_conceptos.md
+# Pista: sección 3 (Generadores con yield) en 01_conceptos.md
 def fibonacci_gen(n: int) -> Generator[int, None, None]:
     pass  # ← reemplazar con tu implementación
 
@@ -40,7 +40,7 @@ def fibonacci_gen(n: int) -> Generator[int, None, None]:
 #   - Calcula el factorial de n de forma recursiva
 #   - factorial_cached(0) == 1, factorial_cached(1) == 1
 #   - Para n > 1: factorial_cached(n) == n * factorial_cached(n - 1)
-# Pista: repasa "functools.lru_cache" en 01_conceptos.md
+# Pista: sección 4 (lru_cache — memoización) en 01_conceptos.md
 @lru_cache(maxsize=128)
 def factorial_cached(n: int) -> int:
     pass  # ← reemplazar con tu implementación
@@ -57,7 +57,7 @@ def factorial_cached(n: int) -> int:
 #   - Produce cada elemento de cada sublista (o elemento directo si no es lista)
 #   - Usa `yield from` para delegar en sublistas
 # Ejemplo: list(aplanar([1, [2, 3], 4, [5, 6]])) → [1, 2, 3, 4, 5, 6]
-# Pista: repasa "yield from — delegación de generadores" en 01_conceptos.md
+# Pista: sección 3 (Generadores con yield) en 01_conceptos.md — apartado "yield from"
 def aplanar(items: list) -> Generator:
     pass  # ← reemplazar con tu implementación
 
@@ -85,7 +85,7 @@ def fibonacci_lento(n: int) -> int:
 #   - Mide el tiempo de fibonacci_rapido(30) con time.perf_counter()
 #   - Imprime ambos tiempos y la diferencia
 #   - Retorna una tupla (tiempo_lento: float, tiempo_rapido: float)
-# Pista: repasa "Medir tiempo con time.perf_counter()" en 01_conceptos.md
+# Pista: sección 1 (time.perf_counter) y sección 5 (Benchmark comparativo con timeit) en 01_conceptos.md
 @lru_cache(maxsize=None)
 def fibonacci_rapido(n: int) -> int:
     pass  # ← reemplazar con tu implementación
@@ -101,10 +101,13 @@ def comparar_tiempos() -> tuple[float, float]:
 
 def demo() -> None:
     print("=== Ejercicio 1: fibonacci_gen ===")
-    fibs = list(fibonacci_gen(8))
-    if fibs:
-        print(f"Primeros 8 Fibonacci: {fibs}")
-    else:
+    try:
+        fibs = list(fibonacci_gen(8))
+        if fibs:
+            print(f"Primeros 8 Fibonacci: {fibs}")
+        else:
+            print("Sin implementar aún.")
+    except TypeError:
         print("Sin implementar aún.")
 
     print("\n=== Ejercicio 2: factorial_cached ===")
@@ -117,10 +120,13 @@ def demo() -> None:
 
     print("\n=== Ejercicio 3: aplanar ===")
     anidada = [1, [2, 3], 4, [5, 6, 7]]
-    resultado = list(aplanar(anidada))
-    if resultado:
-        print(f"  {anidada} → {resultado}")
-    else:
+    try:
+        resultado = list(aplanar(anidada))
+        if resultado:
+            print(f"  {anidada} -> {resultado}")
+        else:
+            print("Sin implementar aún.")
+    except TypeError:
         print("Sin implementar aún.")
 
     print("\n=== Ejercicio 4: comparar_tiempos ===")

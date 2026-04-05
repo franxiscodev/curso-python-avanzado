@@ -1,33 +1,49 @@
-"""Demo Tenacity @retry — Clase 3, Concepto 4.
+"""Tenacity: @retry con espera exponencial entre intentos.
 
-@retry añade resiliencia ante fallos transitorios sin modificar
-la lógica de la función. La función no sabe que está siendo reintentada.
+Demuestra el patrón de reintentos automáticos con backoff exponencial:
+- stop_after_attempt(4): máximo 4 intentos totales
+- wait_exponential(min=1, max=10): espera 1s → 2s → 4s entre intentos
 
-Nota: wait_fixed(1) espera 1 segundo entre intentos.
-Este script tarda ~2 segundos en ejecutarse (2 reintentos x 1s).
+llamar_api_externa() simula una API caída los primeros 3 intentos
+y exitosa en el 4to. La función se llama automáticamente sin código
+de bucle manual — tenacity gestiona el flujo completo.
 
-Ejecuta este script con:
-    uv run scripts/clase_03/conceptos/04_tenacity_retry.py
+Si todos los intentos fallan, ConnectionError se propaga al llamador.
+
+Ejecutar (desde curso/):
+    uv run python scripts/clase_03/conceptos/04_tenacity_retry.py
 """
 
-from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_fixed
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential
 
-intento = 0
+intentos_realizados = 0
+
+# stop: máximo 4 intentos (incluye el primero)
+# wait: espera exponencial — 1s, 2s, 4s entre intentos (cap 10s)
 
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_fixed(1),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=10)
 )
-def operacion_inestable() -> str:
-    global intento
-    intento += 1
-    logger.info("Intento {n} de 3", n=intento)
-    if intento < 3:
-        raise ConnectionError(f"Fallo simulado en intento {intento}")
-    return "Exito en intento 3"
+def llamar_api_externa():
+    global intentos_realizados
+    intentos_realizados += 1
+
+    print(f"[Intento {intentos_realizados}] Conectando a la API...")
+
+    # Los primeros 3 intentos simulan que la API está caída
+    if intentos_realizados < 4:
+        raise ConnectionError("Timeout: El servidor remoto no responde.")
+
+    # El 4to intento tiene éxito — tenacity deja de reintentar y retorna
+    return "Datos obtenidos con exito."
 
 
-resultado = operacion_inestable()
-print(f"\nResultado: {resultado}")
+print("Iniciando proceso de extracción de datos...")
+try:
+    resultado = llamar_api_externa()
+    print(resultado)
+except ConnectionError as e:
+    print("La API está caída definitivamente. Deteniendo proceso.")

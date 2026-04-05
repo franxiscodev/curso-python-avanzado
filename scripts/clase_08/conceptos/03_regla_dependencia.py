@@ -1,93 +1,110 @@
-"""Concepto 03 — Regla de Dependencia: el nucleo no depende de la infraestructura.
+"""
+Concepto 3: La regla de dependencia — el Core no conoce el exterior.
 
-En Arquitectura Hexagonal las dependencias apuntan HACIA ADENTRO:
-- Adaptadores dependen de Puertos (core)
-- El servicio (core) no sabe nada de httpx, bases de datos ni APIs externas
+El script está dividido en tres capas explícitas con comentarios [CAPA N]:
+
+  CAPA 1 — Core/Dominio:
+    WeatherCondition es el modelo de dominio (Pydantic).
+    WeatherPort es el contrato que el Core exige a cualquier proveedor.
+    TripAnalyzer contiene lógica de negocio pura: sin httpx, sin URLs,
+    sin API keys. Solo trabaja con WeatherCondition y WeatherPort.
+
+  CAPA 2 — Infraestructura/Adaptadores:
+    OpenWeatherAdapter implementa WeatherPort traduciendo la respuesta
+    real de la API (temperatura en Kelvin, dict anidado) al modelo del
+    Core (WeatherCondition con temp_celsius).
+    La conversión de Kelvin a Celsius es responsabilidad del adaptador,
+    no del Core — el Core no sabe que la API usa Kelvin.
+
+  CAPA 3 — Aplicación (el ensamblador):
+    Crea el adaptador, lo inyecta en el Core, ejecuta.
+    Es la única capa que conoce ambas partes.
+
+Por qué el Core NO importa httpx:
+  Si TripAnalyzer importase httpx, un cambio en httpx o en la URL de
+  la API podría romper la lógica de negocio. Al prohibir esa dirección,
+  el Core es portable: puede testearse sin red, sin API keys, sin Docker.
+
+Conexión con el proyecto:
+  La estructura core/adapters/services/ de PyCommute sigue exactamente
+  estas tres capas. core/ports.py es el WeatherPort de este script.
 
 Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_08/conceptos/03_regla_dependencia.py
-
-    # Linux
-    uv run scripts/clase_08/conceptos/03_regla_dependencia.py
+  uv run python scripts/clase_08/conceptos/03_regla_dependencia.py
 """
 
+# ==============================================================================
+# [CAPA 1: CORE / DOMINIO]
+# ¡OJO! Aquí NO hay `import httpx` ni librerías de I/O.
+# El Core solo depende de Python puro y herramientas de dominio (Pydantic).
+# ==============================================================================
 from typing import Protocol
 
-
-# ┌─────────────────────────────────────────────────────────────────────┐
-# │  NUCLEO (core) — solo logica de negocio, cero imports externos      │
-# └─────────────────────────────────────────────────────────────────────┘
-
-class TemperaturaPort(Protocol):
-    """Puerto: contrato que el nucleo define."""
-    def obtener_celsius(self, ciudad: str) -> float:
-        ...
+from pydantic import BaseModel, Field
 
 
-class AlertaClimatica:
-    """Logica de negocio pura — depende del Puerto, no del adaptador."""
+class WeatherCondition(BaseModel):
+    """La entidad de dominio. Dicta cómo el Core entiende el clima."""
 
-    UMBRAL_FRIO = 5.0
-    UMBRAL_CALOR = 35.0
-
-    def __init__(self, temperatura: TemperaturaPort) -> None:
-        self._temperatura = temperatura
-
-    def evaluar(self, ciudad: str) -> str:
-        temp = self._temperatura.obtener_celsius(ciudad)
-        if temp < self.UMBRAL_FRIO:
-            return f"FRIO EXTREMO en {ciudad}: {temp}C"
-        if temp > self.UMBRAL_CALOR:
-            return f"CALOR EXTREMO en {ciudad}: {temp}C"
-        return f"Temperatura normal en {ciudad}: {temp}C"
+    temp_celsius: float = Field(..., description="Temperatura en grados Celsius")
+    is_raining: bool
 
 
-# ┌─────────────────────────────────────────────────────────────────────┐
-# │  ADAPTADORES — implementan el Puerto, conocen el mundo exterior     │
-# └─────────────────────────────────────────────────────────────────────┘
+class WeatherPort(Protocol):
+    """El Core exige este contrato a cualquier proveedor de clima."""
 
-class TemperaturaFake:
-    """Adaptador fake — datos hardcodeados para demo sin HTTP."""
-
-    _DATOS = {"Madrid": 38.5, "Valencia": 22.0, "Bilbao": 3.2}
-
-    def obtener_celsius(self, ciudad: str) -> float:
-        return self._DATOS.get(ciudad, 20.0)
+    def fetch_weather(self, city: str) -> WeatherCondition: ...
 
 
-class TemperaturaFija:
-    """Adaptador configurable — util en tests unitarios."""
+class TripAnalyzer:
+    """Lógica de negocio Pura. Ignora el mundo exterior."""
 
-    def __init__(self, valor: float) -> None:
-        self._valor = valor
+    def __init__(self, weather_api: WeatherPort):
+        self.weather = weather_api
 
-    def obtener_celsius(self, ciudad: str) -> float:
-        return self._valor
+    def should_take_umbrella(self, city: str) -> bool:
+        # El Core confía ciegamente en que el adaptador le dará un WeatherCondition válido
+        condition = self.weather.fetch_weather(city)
+
+        # Regla de negocio crítica
+        return condition.is_raining or condition.temp_celsius < 10.0
 
 
-# --- Demo ---
+# ==============================================================================
+# [CAPA 2: INFRAESTRUCTURA / ADAPTADORES]
+# Esta capa SÍ importa librerías externas y DEPENDE del Core
+# para saber qué estructura (WeatherCondition) debe devolver.
+# ==============================================================================
 
-print("=== Regla de Dependencia ===")
-print()
-print("AlertaClimatica (nucleo) NUNCA importa httpx, requests ni nada externo.")
-print("Solo conoce TemperaturaPort — el adaptador lo elige quien llama.")
-print()
 
-alerta = AlertaClimatica(temperatura=TemperaturaFake())
+class OpenWeatherAdapter:
+    """Implementa WeatherPort traduciendo la API externa al Dominio."""
 
-for ciudad in ["Madrid", "Valencia", "Bilbao"]:
-    resultado = alerta.evaluar(ciudad)
-    print(f"  {resultado}")
+    def fetch_weather(self, city: str) -> WeatherCondition:
+        print(f"[HTTP] GET https://api.openweathermap.org/data/2.5/weather?q={city}")
 
-print()
-print("=== Cambiar adaptador sin tocar la logica ===")
-alerta_test = AlertaClimatica(temperatura=TemperaturaFija(-10.0))
-print(f"  {alerta_test.evaluar('CualquierCiudad')}")
+        # Simulamos un JSON sucio que llega de la red
+        api_response_json = {
+            "main": {"temp": 285.15},  # Kelvin!
+            "weather": [{"main": "Rain"}],
+        }
 
-alerta_test2 = AlertaClimatica(temperatura=TemperaturaFija(40.0))
-print(f"  {alerta_test2.evaluar('CualquierCiudad')}")
+        # RESPONSABILIDAD DEL ADAPTADOR:
+        # Traducir la basura del mundo exterior a la pureza del modelo del Core.
+        temp_c = api_response_json["main"]["temp"] - 273.15
+        is_rain = api_response_json["weather"][0]["main"] == "Rain"
 
-print()
-print("El nucleo no cambio — solo el adaptador.")
-print("Esto es la Regla de Dependencia aplicada.")
+        # Retorna el modelo que el Core (TripAnalyzer) exige
+        return WeatherCondition(temp_celsius=temp_c, is_raining=is_rain)
+
+
+# ==============================================================================
+# [CAPA 3: APLICACIÓN / MAIN] (El Ensamblador)
+# ==============================================================================
+if __name__ == "__main__":
+    adapter = OpenWeatherAdapter()
+    core_service = TripAnalyzer(weather_api=adapter)
+
+    city = "Bilbao"
+    bring_umbrella = core_service.should_take_umbrella(city)
+    print(f"Llevar paraguas en {city}? {'Si' if bring_umbrella else 'No'}")

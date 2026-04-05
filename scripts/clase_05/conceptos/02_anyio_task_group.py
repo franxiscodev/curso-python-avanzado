@@ -1,90 +1,46 @@
-"""anyio.create_task_group(): recolectar resultados de tareas paralelas.
+"""anyio.create_task_group(): cancelacion en cascada cuando una tarea falla.
 
-Patron clave: usar un dict compartido para que cada tarea
-guarde su resultado. El dict esta disponible al salir del task group.
+Demuestra el comportamiento de structured concurrency ante errores:
+- Tres tareas se lanzan en paralelo con duraciones distintas
+- La tarea mas rapida (0.5s) lanza RuntimeError antes de que las otras terminen
+- El task group cancela automaticamente las tareas que siguen corriendo
+- Cada tarea cancelada recibe anyio.get_cancelled_exc_class() — debe re-lanzarlo
+- En Python 3.11+, anyio envuelve el RuntimeError en un ExceptionGroup.
+  El main() usa `except*` para capturarlo e iterar sobre las excepciones.
 
 Ejecutar:
     uv run scripts/clase_05/conceptos/02_anyio_task_group.py
 """
 
-from typing import Any
-
 import anyio
+from loguru import logger
 
 
-async def fetch_simulado(fuente: str, delay: float) -> dict[str, Any]:
-    """Simula una llamada a una API externa con delay configurable."""
-    await anyio.sleep(delay)
-    return {"fuente": fuente, "dato": f"resultado de {fuente}"}
+async def fetch_service(nombre: str, latencia: float, fallar: bool = False):
+    try:
+        logger.info(f"Iniciando {nombre}...")
+        await anyio.sleep(latencia)
+        if fallar:
+            raise RuntimeError(f"¡Caída catastrófica en {nombre}!")
+        logger.success(f"{nombre} completado.")
+    except anyio.get_cancelled_exc_class():
+        # CRÍTICO: siempre re-lanzar la excepción de cancelación.
+        # Si no se re-lanza, anyio cree que la tarea terminó limpiamente
+        # y el mecanismo de structured concurrency se rompe.
+        logger.warning(f"-> {nombre} fue cancelado a mitad de vuelo.")
+        raise
 
 
-async def ejemplo_basico() -> None:
-    """Patron fundamental: dict compartido para recoger resultados."""
-    print("=== Patron basico: dict compartido ===")
-
-    resultados: dict[str, Any] = {}
-
-    async def tarea_clima() -> None:
-        resultados["clima"] = await fetch_simulado("OpenWeather", 0.4)
-
-    async def tarea_ruta() -> None:
-        resultados["ruta"] = await fetch_simulado("OpenRouteService", 0.3)
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(tarea_clima)
-        tg.start_soon(tarea_ruta)
-    # Aqui AMBAS tareas han terminado
-
-    print(f"  Clima: {resultados['clima']}")
-    print(f"  Ruta:  {resultados['ruta']}")
-    print()
-
-
-async def ejemplo_multiples_items() -> None:
-    """Patron con lista: multiples items en paralelo."""
-    print("=== Patron con lista: items en paralelo ===")
-
-    ciudades = ["Madrid", "Valencia", "Barcelona"]
-    resultados: list[dict] = []
-    lock = anyio.Lock()  # para append seguro desde multiples tareas
-
-    async def fetch_ciudad(ciudad: str) -> None:
-        resultado = await fetch_simulado(ciudad, 0.2)
-        async with lock:
-            resultados.append(resultado)
-
-    async with anyio.create_task_group() as tg:
-        for ciudad in ciudades:
-            tg.start_soon(fetch_ciudad, ciudad)
-
-    print(f"  {len(resultados)} ciudades consultadas en paralelo:")
-    for r in resultados:
-        print(f"    {r}")
-    print()
-
-
-async def ejemplo_error_handling() -> None:
-    """Error handling: cualquier excepcion cancela el grupo."""
-    print("=== Error handling en task group ===")
-
-    async def tarea_ok() -> None:
-        await anyio.sleep(0.1)
-        print("  tarea_ok: completada")
-
-    async def tarea_falla() -> None:
-        await anyio.sleep(0.05)
-        raise ValueError("algo salio mal")
-
+async def main():
     try:
         async with anyio.create_task_group() as tg:
-            tg.start_soon(tarea_ok)
-            tg.start_soon(tarea_falla)
-    except* ValueError as eg:
-        print(f"  Error capturado: {eg.exceptions[0]}")
-        print("  tarea_ok fue cancelada automaticamente")
-    print()
+            tg.start_soon(fetch_service, "OpenWeather", 2.0, False)
+            tg.start_soon(fetch_service, "OpenRoute", 1.5, False)
+            # Este fallará a los 0.5s, forzando la cancelación de los otros dos
+            tg.start_soon(fetch_service, "Ollama_Fallback", 0.5, True)
+    except* RuntimeError as eg:
+        for exc in eg.exceptions:
+            logger.error(f"TaskGroup colapsado por: {exc}")
 
-
-anyio.run(ejemplo_basico)
-anyio.run(ejemplo_multiples_items)
-anyio.run(ejemplo_error_handling)
+if __name__ == "__main__":
+    anyio.run(main)

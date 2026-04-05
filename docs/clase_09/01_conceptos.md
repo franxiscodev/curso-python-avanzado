@@ -1,292 +1,320 @@
-# Clase 09 — Contratos de Datos con Pydantic V2
+# Conceptos — Clase 09: Contratos de Datos con Pydantic V2
 
-## El problema: datos sin garantías
+Cuando `fetch_clima` devuelve un `dict`, el código no sabe si
+`data["temperature"]` es un `float`, un `str` o `None` hasta que lo usa.
+El error aparece lejos del origen y sin contexto.
 
-Cuando una función devuelve un `dict`, cualquier clave puede estar ausente,
-cualquier valor puede tener el tipo incorrecto, y el error aparece lejos del origen:
+Pydantic resuelve esto declarando el contrato en el tipo:
 
 ```python
-# La API devuelve esto
-data = {"temperature": 999.0, "description": "hot"}
-
-# ...viaja por el servicio sin error...
-# ...llega al historial sin error...
-# ...aparece en el output sin error...
-# El dato inválido llegó a producción.
+class LecturaClima(BaseModel):
+    temperatura: float = Field(ge=-80, le=60)
+    ciudad: str = Field(min_length=1)
 ```
 
-Pydantic resuelve esto detectando el error **en la frontera** — exactamente donde
-el dato externo entra al sistema.
+Si `temperatura` llega como `"22.5"` (string), Pydantic la convierte.
+Si llega como `999.0`, lanza `ValidationError` en ese momento exacto — no
+diez funciones después.
 
 ---
 
-## 1. BaseModel — la unidad básica de Pydantic V2
+## 1. BaseModel y coerción de tipos
 
-`BaseModel` genera un `__init__` que valida en cada creación:
+`BaseModel` genera un `__init__` que valida y convierte cada campo al tipo
+declarado. Este comportamiento se llama **coerción** (lax mode por defecto).
+
+```python
+from pydantic import BaseModel
+
+class LecturaClima(BaseModel):
+    temperatura: float
+    ciudad: str
+    activo: bool
+```
+
+```python
+# Los datos de una API JSON llegan como strings
+lectura = LecturaClima(temperatura="22.5", ciudad="Valencia", activo="true")
+
+print(lectura.temperatura)  # 22.5 — float, no string
+print(lectura.activo)       # True — bool, no string
+```
+
+Cuando la conversión no es posible, Pydantic lanza `ValidationError` con
+el detalle de cada campo que falló — todos a la vez, no uno por uno:
+
+```python
+from pydantic import ValidationError
+
+try:
+    LecturaClima(temperatura="muy_caliente", ciudad="Valencia", activo="quizas")
+except ValidationError as e:
+    print(e.error_count())   # 2 — los dos campos fallaron
+    for err in e.errors():
+        print(err["loc"], err["msg"])
+```
+
+### Field — constraints declarativos
+
+`Field` añade restricciones que Pydantic comprueba tras la coerción:
 
 ```python
 from pydantic import BaseModel, Field
 
-class Producto(BaseModel):
-    nombre: str = Field(min_length=1)
-    precio: float = Field(gt=0)
-    stock: int = Field(ge=0, default=0)
+class LecturaClimaValidada(BaseModel):
+    temperatura: float = Field(ge=-80, le=60)
+    humedad:     int   = Field(ge=0, le=100)
+    ciudad:      str   = Field(min_length=1)
 ```
+
+| Constraint | Significado |
+|-----------|-------------|
+| `gt=0`    | estrictamente mayor que 0 |
+| `ge=0`    | mayor o igual que 0 |
+| `lt=100`  | estrictamente menor que 100 |
+| `le=100`  | menor o igual que 100 |
+| `min_length=1` | al menos 1 carácter |
+| `max_length=50` | máximo 50 caracteres |
+
+### Field con alias — mapeo de nombres externos
+
+Cuando la API externa usa nombres distintos a los campos Python del modelo:
 
 ```python
-# Creación válida
-p = Producto(nombre="Café", precio=2.50)
-print(p.nombre)   # "Café"
-print(p.stock)    # 0 (default)
+from pydantic import BaseModel, ConfigDict, Field
 
-# Creación inválida — falla aquí, no después
-Producto(nombre="", precio=2.50)
-# ValidationError: nombre — String should have at least 1 character
+class EstacionMeteo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    station_id:   str   = Field(alias="id")
+    station_name: str   = Field(alias="name")
+    elevation_m:  float = Field(alias="elevation")
 ```
 
-**Coerción automática** (lax mode por defecto):
+Con `populate_by_name=True`, el modelo acepta tanto el alias como el nombre
+Python al construir la instancia:
+
 ```python
-Producto(nombre="Café", precio="2.50")  # "2.50" → 2.50, sin error
-```
+# Por alias (como llega del JSON de la API)
+e1 = EstacionMeteo(id="ES001", name="Valencia Norte", elevation=12.5)
 
-Pydantic intenta convertir al tipo declarado. Útil cuando los datos vienen de JSON
-donde `"24"` y `24` son equivalentes.
+# Por nombre Python (útil en tests y código interno)
+e2 = EstacionMeteo(station_id="ES001", station_name="Valencia Norte", elevation_m=12.5)
+```
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_09/conceptos/01_pydantic_basico.py`
+  `uv run python scripts/clase_09/conceptos/01_pydantic_coercion.py`
+
+### Analiza la salida
+
+El script usa `Dispositivo` con `id: int` y `esta_activo: bool`. Los datos
+de entrada son strings (`"101"`, `"true"`).
+
+- **Caso A**: Pydantic convierte los strings a los tipos declarados. Los
+  `assert` verifican que `dispositivo.id` es el entero `101`, no el string.
+  El `logger.success` confirma la coerción.
+
+- **Caso B**: `"no_soy_un_numero"` no tiene conversión válida a `int`.
+  `"tal vez"` no tiene conversión válida a `bool`. El `ValidationError`
+  muestra **ambos errores a la vez** — Pydantic no para en el primero.
+  Cada error incluye: campo, valor recibido, motivo del fallo.
 
 ---
 
-## 2. Field — constraints declarativos
+## 2. @field_validator — reglas de negocio por campo
 
-`Field` añade validación y documentación al campo:
-
-```python
-from pydantic import BaseModel, Field
-
-class Sensor(BaseModel):
-    nombre: str = Field(min_length=1, max_length=50)
-    valor: float = Field(ge=-100.0, le=100.0)
-    unidad: str = Field(pattern=r"^[A-Za-z°%]+$")
-    lecturas: list[float] = Field(default_factory=list)
-```
-
-### Constraints numéricos
-
-| Constraint | Significado                       |
-|-----------|-----------------------------------|
-| `gt=0`    | greater than — estrictamente > 0  |
-| `ge=0`    | greater or equal — >= 0           |
-| `lt=100`  | less than — estrictamente < 100   |
-| `le=100`  | less or equal — <= 100            |
-
-### Constraints de string
-
-| Constraint           | Significado                   |
-|---------------------|-------------------------------|
-| `min_length=1`      | al menos 1 carácter           |
-| `max_length=100`    | máximo 100 caracteres         |
-| `pattern=r"^\w+$"`  | validación con regex          |
-
-### `default_factory` — defaults mutables
-
-```python
-# MAL — mismo bug que def f(x=[])
-tags: list[str] = Field(default=[])
-
-# BIEN — cada instancia crea su propia lista
-tags: list[str] = Field(default_factory=list)
-timestamp: datetime = Field(default_factory=datetime.now)
-```
-
----
-
-## 3. @field_validator — validación custom
-
-Para lógica que `Field` no puede expresar declarativamente:
+Para lógica que `Field` no puede expresar declarativamente (rangos físicos,
+transformaciones de formato, checks contra base de datos):
 
 ```python
 from pydantic import BaseModel, field_validator
 
-class Temperatura(BaseModel):
-    valor: float
-    ciudad: str
+class SensorTemperatura(BaseModel):
+    lectura: float
 
-    @field_validator("valor")
-    @classmethod                          # OBLIGATORIO en Pydantic V2
-    def rango_realista(cls, v: float) -> float:
-        if not -80 <= v <= 60:
-            raise ValueError(f"Temperatura imposible: {v}°C")
-        return round(v, 1)               # puede transformar el valor
-
-    @field_validator("ciudad")
-    @classmethod
-    def normalizar(cls, v: str) -> str:
-        return v.strip().title()          # "  valencia  " → "Valencia"
+    @field_validator("lectura")
+    @classmethod                           # OBLIGATORIO en Pydantic V2
+    def validar_cero_absoluto(cls, v: float) -> float:
+        if v < -273.15:
+            raise ValueError("Temperatura por debajo del cero absoluto")
+        return v                           # siempre devolver el valor
 ```
 
-El `@classmethod` es **obligatorio** en V2. En V1 era opcional — código V1
-puede fallar silenciosamente en V2.
+El `@classmethod` es **obligatorio** en V2 — en V1 era opcional y el código
+antiguo puede fallar silenciosamente al migrar.
 
-### `mode="before"` — antes de la coerción de tipo
+### mode="before" vs mode="after"
 
 ```python
-@field_validator("fecha", mode="before")
+# mode="after" (default) — recibe el valor ya convertido al tipo declarado
+@field_validator("lectura")
 @classmethod
-def normalizar_fecha(cls, v):
+def check_rango(cls, v: float) -> float:   # v ya es float
+    ...
+
+# mode="before" — recibe el valor raw, antes de la coerción de tipo
+@field_validator("ciudad", mode="before")
+@classmethod
+def normalizar(cls, v) -> str:             # v puede ser cualquier cosa
     if isinstance(v, str):
-        return datetime.strptime(v, "%d/%m/%Y")
+        return v.strip().title()
     return v
 ```
 
-- `mode="after"` (default): recibe el valor ya convertido al tipo declarado
-- `mode="before"`: recibe el valor raw, antes de cualquier conversión
-
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_09/conceptos/02_field_validators.py`
+  `uv run python scripts/clase_09/conceptos/02_field_validators.py`
+
+### Analiza la salida
+
+El script usa `SensorTemperatura` con un validador que aplica la ley
+física del cero absoluto (-273.15 °C).
+
+- **Caso A** (`lectura=25.5`): el validador imprime la lectura en curso
+  y la deja pasar — es una temperatura físicamente posible.
+- **Caso B** (`lectura=-300.0`): `-300 < -273.15`, el validador lanza
+  `ValueError`. Pydantic lo captura y lo convierte en `ValidationError`
+  indicando exactamente qué campo falló y con qué valor.
+- El `print(f"  Validando lectura: {v}")` hace visible que el validador
+  se ejecuta una vez por instancia, no en el body del `__init__`.
 
 ---
 
-## 4. @model_validator — validación del modelo completo
+## 3. @model_validator — validación entre múltiples campos
 
-Cuando la validación necesita acceso a **más de un campo**:
+`@field_validator` solo ve un campo a la vez. Cuando la regla involucra
+la **relación entre dos o más campos**, se usa `@model_validator`:
 
 ```python
 from pydantic import BaseModel, model_validator
 
-class Reserva(BaseModel):
-    fecha_entrada: date
-    fecha_salida: date
-    noches: int | None = None
+class FiltroRuta(BaseModel):
+    distancia_min: float
+    distancia_max: float
 
     @model_validator(mode="after")
-    def calcular_noches(self) -> "Reserva":
-        if self.fecha_salida <= self.fecha_entrada:
-            raise ValueError("La salida debe ser posterior a la entrada")
-        self.noches = (self.fecha_salida - self.fecha_entrada).days
-        return self
+    def verificar_rango(self) -> "FiltroRuta":
+        if self.distancia_max <= self.distancia_min:
+            raise ValueError("distancia_max debe ser mayor que distancia_min")
+        return self          # siempre devolver self
 ```
-
-```python
-r = Reserva(fecha_entrada=date(2024, 6, 1), fecha_salida=date(2024, 6, 5))
-print(r.noches)  # 4 — calculado automáticamente
-```
-
-`noches` es un **invariante del modelo**: siempre está calculado cuando el objeto
-existe. El llamador no puede olvidarlo.
 
 ### Orden de ejecución
 
 ```
 campo 1 → @field_validator("campo1") → ...
 campo 2 → @field_validator("campo2") → ...
-         ↓
-         @model_validator(mode="after")
+                        ↓
+          @model_validator(mode="after")
 ```
 
 Si un `@field_validator` falla, el `@model_validator` no se ejecuta.
+El objeto nunca llega a existir con datos inconsistentes.
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_09/conceptos/03_model_validator.py`
+  `uv run python scripts/clase_09/conceptos/03_model_validator.py`
+
+### Analiza la salida
+
+El script usa `RangoFechas` con campos `inicio` y `fin` como enteros
+`AAAAMMDD`. Ningún `@field_validator` podría comparar los dos campos.
+
+- **Caso A** (`inicio=20240101`, `fin=20241231`): el print de debug confirma
+  que el model_validator recibe ambos valores ya convertidos a `int`. El rango
+  es lógico — la instancia se crea.
+- **Caso B** (`inicio=20241231`, `fin=20240101`): fin < inicio, la regla
+  cross-field lo detecta. El `ValidationError` muestra el error sin indicar
+  un campo específico — el error es del modelo completo, no de un campo.
 
 ---
 
-## 5. ValidationError — fallar en la frontera
+## 4. Serialización — model_dump y aliases de salida
 
-Cuando la validación falla, Pydantic lanza `ValidationError`:
-
-```python
-from pydantic import ValidationError
-
-try:
-    Temperatura(valor=999.0, ciudad="Venus")
-except ValidationError as e:
-    print(e.error_count())      # 1
-    for error in e.errors():
-        print(error["loc"])     # ('valor',)
-        print(error["msg"])     # Value error, Temperatura imposible: 999.0°C
-        print(error["type"])    # value_error
-```
-
-`ValidationError` agrega **todos los errores** del objeto, no solo el primero:
+Una vez validado el dato, Pydantic permite exportarlo con control total
+sobre qué campos salen y con qué nombres:
 
 ```python
-try:
-    Producto(nombre="", precio=-5.0, stock=-1)
-except ValidationError as e:
-    print(e.error_count())  # 3 — los tres campos fallaron
+class ResultadoRuta(BaseModel):
+    duracion_min: int
+    distancia_km: float
+    perfil: str
+    _cache_key: str = Field(exclude=True)   # nunca sale en el dump
 ```
 
-El principio: **el error ocurre exactamente donde el dato inválido intenta
-entrar al sistema**, no después cuando ya contaminó otras partes.
+| Método | Resultado | Caso de uso |
+|--------|-----------|-------------|
+| `model_dump()` | `dict` Python | ORM, librería interna |
+| `model_dump(by_alias=True)` | `dict` con alias | API externa |
+| `model_dump_json()` | `str` JSON | respuesta HTTP directa |
+| `model_validate(d)` | instancia validada | reconstruir desde dict |
+
+### serialization_alias — nombre distinto en la salida
+
+Cuando la API que consumes espera claves diferentes a los nombres Python:
+
+```python
+class LecturaClima(BaseModel):
+    temperatura: float = Field(..., serialization_alias="temp_c")
+    descripcion: str
+
+lectura = LecturaClima(temperatura=22.5, descripcion="soleado")
+print(lectura.model_dump())                   # {"temperatura": 22.5, "descripcion": "soleado"}
+print(lectura.model_dump(by_alias=True))      # {"temp_c": 22.5, "descripcion": "soleado"}
+```
+
+▶ Ejecuta el ejemplo:
+  `uv run python scripts/clase_09/conceptos/04_pydantic_serializacion.py`
+
+### Analiza la salida
+
+El script usa `UsuarioAPI` con tres campos notables:
+- `email` tiene `serialization_alias="user_email"`
+- `token_interno` tiene `exclude=True`
+
+**Escenario A** (`model_dump()` estándar): el dict contiene `email` con
+su nombre Python. `token_interno` no aparece — `Field(exclude=True)` lo
+elimina en todos los dumps sin excepción.
+
+**Escenario B** (`model_dump(by_alias=True)`): `email` desaparece del dict
+y aparece como `user_email`. `by_alias=True` activa todos los
+`serialization_alias` del modelo a la vez.
+
+**Escenario C** (`model_dump_json(...)`): genera un string JSON directamente,
+más eficiente que `json.dumps(model_dump(...))`. La exclusión ad-hoc
+`exclude={"id"}` elimina campos adicionales sin modificar el modelo.
 
 ---
 
-## 6. model_dump() — serialización
+## 5. Pydantic vs dataclass vs TypedDict
+
+| Aspecto | dataclass | TypedDict | Pydantic |
+|---------|-----------|-----------|---------|
+| Validación en runtime | No | No | Sí |
+| Coerción de tipos | No | No | Sí |
+| Serialización JSON | Manual | Manual | Nativa |
+| Overhead | Mínimo | Mínimo | Pequeño |
+| Schema JSON | No | No | `model_json_schema()` |
+| Integración FastAPI | No | Parcial | Nativa |
+
+**Cuándo usar cada uno:**
+
+- **Pydantic** — datos que cruzan una frontera del sistema: respuesta de API,
+  configuración de entorno, request HTTP, datos de base de datos. Cualquier
+  dato que venga de fuera del proceso Python.
+- **dataclass** — datos puramente internos y computacionales. `NodoArbol`,
+  `Coordenada`, estructuras auxiliares que nunca salen del proceso.
+- **TypedDict** — documentar la forma de dicts existentes que no se pueden
+  migrar (código legacy, librerías que devuelven dicts sin más).
 
 ```python
-from datetime import datetime
-
-class Pedido(BaseModel):
-    id: int
-    creado_en: datetime
-    items: list[str]
-
-p = Pedido(id=1, creado_en=datetime.now(), items=["café", "pan"])
-```
-
-| Método                       | Resultado                        | Notas                           |
-|-----------------------------|----------------------------------|---------------------------------|
-| `p.model_dump()`            | `dict` Python                    | `datetime` como objeto          |
-| `p.model_dump(mode="json")` | `dict` con tipos JSON            | `datetime` como string ISO      |
-| `p.model_dump_json()`       | `str` JSON                       | Directo, más rápido             |
-| `Pedido.model_validate(d)`  | instancia validada desde `dict`  | Valida al reconstruir           |
-
-```python
-# dict Python — datetime como objeto
-data = p.model_dump()
-print(type(data["creado_en"]))  # <class 'datetime.datetime'>
-
-# dict JSON-compatible — datetime como string
-data_json = p.model_dump(mode="json")
-print(data_json["creado_en"])   # "2024-03-28T10:30:00"
-
-# reconstruir con validación
-p2 = Pedido.model_validate(data)
-```
-
----
-
-## 7. Pydantic vs dataclass vs TypedDict
-
-| Aspecto               | dataclass | TypedDict | Pydantic |
-|-----------------------|-----------|-----------|---------|
-| Validación runtime    | No        | No        | Sí      |
-| Coerción de tipos     | No        | No        | Sí      |
-| Serialización JSON    | Manual    | Manual    | Nativa  |
-| Overhead              | Mínimo    | Mínimo    | Pequeño |
-| Schema JSON           | No        | No        | Sí      |
-| Integración FastAPI   | No        | Parcial   | Nativa  |
-
-**Regla de uso:**
-
-- **dataclass** → datos internos, puramente computacionales, sin fronteras del sistema
-- **Pydantic** → datos que cruzan una frontera: API externa, base de datos, archivo de configuración, request HTTP
-- **TypedDict** → documentar la forma de dicts existentes que no se pueden migrar (código legacy)
-
-```python
-# dataclass — datos internos sin validar
+# dataclass — nodo interno del algoritmo de Dijkstra
 @dataclass
-class NodoArbol:
-    valor: int
-    izquierda: "NodoArbol | None" = None
-    derecha: "NodoArbol | None" = None
+class NodoRuta:
+    ciudad: str
+    distancia_acumulada: float
+    anterior: "NodoRuta | None" = None
 
-# Pydantic — datos que vienen de una API externa
-class RespuestaAPI(BaseModel):
+# Pydantic — respuesta de fetch_clima que viene de OpenWeather
+class LecturaClima(BaseModel):
     temperatura: float = Field(ge=-80, le=60)
     ciudad: str = Field(min_length=1)
 ```
-
-▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_09/conceptos/04_pydantic_vs_dataclass.py`

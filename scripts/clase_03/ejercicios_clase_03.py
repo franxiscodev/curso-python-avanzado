@@ -30,7 +30,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed, before_log, after_lo
 #   3. Añade un handler a un archivo "app.log" con nivel "WARNING"
 #   4. Retorna None
 # Después de llamar a la función, loguea una línea INFO y una WARNING para probar.
-# Pista: repasa "Configuración avanzada con logger.add()" en 01_conceptos.md
+# Pista: repasa la sección 2 (Loguru — niveles y sinks múltiples) en 01_conceptos.md
 def configurar_logger() -> None:
     pass  # ← reemplazar con tu implementación
 
@@ -47,7 +47,7 @@ def configurar_logger() -> None:
 #   - api_url: str con valor default "https://api.example.com"
 # Añade model_config = SettingsConfigDict(env_prefix="APP_") para que las
 # variables de entorno tengan prefijo APP_ (ej: APP_DEBUG=true).
-# Pista: repasa "pydantic-settings — configuración tipada" en 01_conceptos.md
+# Pista: repasa la sección 4 (Pydantic-Settings — configuración tipada y fail-fast) en 01_conceptos.md
 #
 # from pydantic_settings import SettingsConfigDict  # ya importado arriba si lo necesitas
 class AppSettings(BaseSettings):
@@ -84,7 +84,7 @@ def _operacion_inestable() -> str:
 #   2. Llama a `_operacion_inestable()` y retorna su resultado
 # NOTA: `_intento_actual` ya está inicializado en 0 — no lo modifiques.
 # La función debe tener éxito en el intento 3.
-# Pista: repasa "Tenacity — reintentos declarativos" en 01_conceptos.md
+# Pista: repasa la sección 5 (Tenacity — @retry declarativo) en 01_conceptos.md
 def conectar_con_retry() -> str:
     pass  # ← reemplazar con tu implementación
 

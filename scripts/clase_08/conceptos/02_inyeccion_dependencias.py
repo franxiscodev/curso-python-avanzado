@@ -1,91 +1,67 @@
-"""Concepto 02 — Inyeccion de Dependencias (DI) por constructor.
+"""
+Concepto 2: Inyección de dependencias por constructor.
 
-Sin DI: la clase instancia sus dependencias internamente — imposible de testear.
-Con DI: las dependencias se pasan desde fuera — testeable, flexible, SOLID.
+CachePort define el contrato: get(key) y set(key, value).
+DictCacheAdapter implementa el contrato con un dict en memoria.
+CommuteService recibe un CachePort en el constructor — no crea
+ni importa ningún adaptador concreto.
+
+Por qué recibir la interfaz y no instanciarla internamente:
+- En producción: CommuteService(cache=DictCacheAdapter())
+- En tests:      CommuteService(cache=FakeCacheAdapter())
+  Sin mocker.patch, sin interceptar módulos.
+
+El demo muestra cache hit/miss: la segunda llamada con "ruta_01"
+devuelve el resultado guardado sin recalcular.
+
+Conexión con el proyecto:
+  services/commute.py recibe WeatherPort, RoutePort y CachePort
+  exactamente así — ningún adaptador se instancia dentro del servicio.
+  La factory demo_proyecto.py o el test crean los adaptadores y los inyectan.
 
 Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_08/conceptos/02_inyeccion_dependencias.py
-
-    # Linux
-    uv run scripts/clase_08/conceptos/02_inyeccion_dependencias.py
+  uv run python scripts/clase_08/conceptos/02_inyeccion_dependencias.py
 """
 
-from typing import Protocol
+from typing import Optional, Protocol
 
 
-# --- Puerto (contrato) ---
-
-class NotificadorPort(Protocol):
-    def enviar(self, mensaje: str) -> None:
-        ...
+class CachePort(Protocol):
+    def get(self, key: str) -> Optional[str]: ...
+    def set(self, key: str, value: str) -> None: ...
 
 
-# --- Adaptadores concretos ---
+class DictCacheAdapter:
+    def __init__(self):
+        self._store = {}
 
-class EmailNotificador:
-    def enviar(self, mensaje: str) -> None:
-        print(f"  [EMAIL] {mensaje}")
+    def get(self, key: str) -> Optional[str]:
+        return self._store.get(key)
 
-
-class SmsNotificador:
-    def enviar(self, mensaje: str) -> None:
-        print(f"  [SMS]   {mensaje}")
-
-
-class NotificadorFake:
-    """Notificador para tests — registra mensajes sin enviar nada real."""
-
-    def __init__(self) -> None:
-        self.enviados: list[str] = []
-
-    def enviar(self, mensaje: str) -> None:
-        self.enviados.append(mensaje)
+    def set(self, key: str, value: str) -> None:
+        self._store[key] = value
 
 
-# --- MAL: sin DI — dependencia acoplada internamente ---
+class CommuteService:
+    # EL SECRETO ESTÁ AQUÍ: Recibir la interfaz en el constructor
+    def __init__(self, cache: CachePort):
+        self.cache = cache
 
-class ServicioPedidoSinDI:
-    def __init__(self) -> None:
-        self._notificador = EmailNotificador()  # hardcodeado
+    def get_commute_info(self, route_id: str) -> str:
+        cached_data = self.cache.get(route_id)
+        if cached_data:
+            return f"Cache Hit: {cached_data}"
 
-    def confirmar(self, pedido_id: str) -> None:
-        self._notificador.enviar(f"Pedido {pedido_id} confirmado")
-
-
-# --- BIEN: con DI por constructor ---
-
-class ServicioPedido:
-    def __init__(self, notificador: NotificadorPort) -> None:
-        self._notificador = notificador  # inyectado desde fuera
-
-    def confirmar(self, pedido_id: str) -> None:
-        self._notificador.enviar(f"Pedido {pedido_id} confirmado")
+        # Simula un cálculo pesado
+        result = "Datos procesados de la ruta"
+        self.cache.set(route_id, result)
+        return f"Calculado Nuevo: {result}"
 
 
-# --- Demo ---
+# Ejecución (Capa externa / main.py)
+memory_cache = DictCacheAdapter()
+# Inyectamos la dependencia
+service = CommuteService(cache=memory_cache)
 
-print("=== Sin DI (notificador hardcodeado) ===")
-servicio_sin_di = ServicioPedidoSinDI()
-servicio_sin_di.confirmar("A001")
-# Para testear hay que parchear la clase interna — fragil
-
-print()
-print("=== Con DI — adaptador real ===")
-servicio_email = ServicioPedido(notificador=EmailNotificador())
-servicio_email.confirmar("B001")
-
-servicio_sms = ServicioPedido(notificador=SmsNotificador())
-servicio_sms.confirmar("B002")
-
-print()
-print("=== Con DI — adaptador fake para tests ===")
-fake = NotificadorFake()
-servicio_test = ServicioPedido(notificador=fake)
-servicio_test.confirmar("C001")
-servicio_test.confirmar("C002")
-
-print(f"Mensajes capturados: {fake.enviados}")
-assert fake.enviados[0] == "Pedido C001 confirmado"
-assert fake.enviados[1] == "Pedido C002 confirmado"
-print("Assertions OK — test sin parchear nada")
+print(service.get_commute_info("ruta_01"))  # Calculado Nuevo
+print(service.get_commute_info("ruta_01"))  # Cache Hit

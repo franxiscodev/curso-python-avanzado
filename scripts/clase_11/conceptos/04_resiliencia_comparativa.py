@@ -1,120 +1,79 @@
-"""Resiliencia comparativa — fallback vs retry vs sin proteccion.
+"""
+Resiliencia bajo carga concurrente — benchmark de fallback con anyio.
 
-Demuestra:
-- Sin proteccion: el primer error mata la ejecucion
-- Con retry (tenacity): reintenta antes de rendirse
-- Con fallback: conmuta a alternativa si falla
-- Comparativa de latencia: cloud vs local vs fallback
+Demuestra que el patrón fallback funciona correctamente con 10 peticiones en paralelo:
+  - flaky_cloud: falla el 60% de las veces (simula throttling de Gemini)
+  - reliable_local: nunca falla, pero es 4x más lento (inferencia local)
+  - process_request: orquesta el fallback por petición individual
+  - run_benchmark: lanza las 10 peticiones con anyio.create_task_group
 
-No requiere Ollama ni API keys — todo simulado.
+El reporte final muestra cuántas peticiones se atendieron por cada proveedor
+y confirma que el uptime fue del 100% — ninguna petición se perdió.
 
-Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_11/conceptos/04_resiliencia_comparativa.py
-
-    # Linux
-    uv run scripts/clase_11/conceptos/04_resiliencia_comparativa.py
+Ejecutar (desde curso/):
+    uv run python scripts/clase_11/conceptos/04_resiliencia_comparativa.py
 """
 
-import asyncio
+import random
 import time
-from typing import Protocol
+
+import anyio
+from loguru import logger
 
 
-# ── Puerto ────────────────────────────────────────────────────────────
-class AIPort(Protocol):
-    async def generar(self, prompt: str) -> str: ...
+class QuotaExceededError(Exception):
+    pass
 
 
-# ── Simuladores ───────────────────────────────────────────────────────
-class SimuladorGemini:
-    """Simula Gemini: rapido pero puede fallar (429, timeout, etc.)."""
+async def flaky_cloud(req_id: int) -> str:
+    """Simula una API Cloud inestable que corta conexiones por Throttling."""
+    await anyio.sleep(0.2)  # Latencia baja: la nube responde rápido cuando funciona
+    # 60% de fallos simula un escenario de throttling por concurrencia elevada
+    if random.random() < 0.60:
+        logger.debug(f"[Req {req_id}] NUBE: Error 429 Too Many Requests")
+        raise QuotaExceededError("Throttling en API Cloud")
 
-    def __init__(self, falla: bool = False, latencia: float = 0.1) -> None:
-        self._falla = falla
-        self._latencia = latencia
-
-    async def generar(self, prompt: str) -> str:
-        await asyncio.sleep(self._latencia)
-        if self._falla:
-            raise ConnectionError("429 RESOURCE_EXHAUSTED — cuota agotada")
-        return "Respuesta Gemini (cloud, alta calidad)"
+    logger.success(f"[Req {req_id}] NUBE: Respuesta exitosa")
+    return "Cloud_Data"
 
 
-class SimuladorOllama:
-    """Simula Ollama: mas lento pero siempre disponible (local)."""
-
-    def __init__(self, latencia: float = 0.5) -> None:
-        self._latencia = latencia
-
-    async def generar(self, prompt: str) -> str:
-        await asyncio.sleep(self._latencia)
-        return "Respuesta Ollama (local, calidad media)"
+async def reliable_local(req_id: int) -> str:
+    """Simula nuestro modelo local. Nunca falla, pero es más lento."""
+    await anyio.sleep(0.8)  # Latencia mayor: inferencia en CPU local es más costosa
+    logger.info(f"[Req {req_id}] LOCAL: Fallback exitoso")
+    return "Local_Data"
 
 
-# ── Estrategias de resiliencia ────────────────────────────────────────
-class FallbackAI:
-    """Intenta primary, conmuta a secondary si falla."""
-
-    def __init__(self, primary: AIPort, secondary: AIPort) -> None:
-        self._primary = primary
-        self._secondary = secondary
-
-    async def generar(self, prompt: str) -> str:
-        try:
-            return await self._primary.generar(prompt)
-        except Exception as e:
-            print(f"    Fallback activado: {e}")
-            return await self._secondary.generar(prompt)
-
-
-async def medir(nombre: str, servicio: AIPort, n: int = 3) -> None:
-    """Mide el tiempo total de N llamadas al servicio."""
-    inicio = time.perf_counter()
-    ultimo = ""
+async def process_request(req_id: int, results: list):
+    """Orquestador por petición: intenta cloud, cae a local si falla."""
+    start_time = time.perf_counter()
     try:
-        for _ in range(n):
-            ultimo = await servicio.generar("prompt de movilidad")
-        total = time.perf_counter() - inicio
-        print(f"  {nombre:<35} {total:.2f}s para {n} requests")
-        print(f"    Ultima respuesta: {ultimo[:50]}")
-    except Exception as e:
-        total = time.perf_counter() - inicio
-        print(f"  {nombre:<35} FALLO en {total:.2f}s: {e}")
+        source = await flaky_cloud(req_id)
+    except QuotaExceededError:
+        source = await reliable_local(req_id)  # fallback transparente
+
+    elapsed = time.perf_counter() - start_time
+    results.append((req_id, source, elapsed))
 
 
-async def main() -> None:
-    print("=== Comparativa de estrategias de resiliencia ===\n")
+async def run_benchmark():
+    logger.info("=== INICIANDO BENCHMARK CONCURRENTE ===")
+    results = []
 
-    print("1. Gemini disponible — caso ideal:")
-    await medir("Gemini (disponible)", SimuladorGemini())
+    # create_task_group lanza las 10 peticiones en paralelo — concurrencia estructurada
+    async with anyio.create_task_group() as tg:
+        for i in range(1, 11):
+            tg.start_soon(process_request, i, results)
 
-    print("\n2. Gemini caido — sin proteccion:")
-    await medir("Gemini (caido, sin fallback)", SimuladorGemini(falla=True))
+    # Análisis de métricas al finalizar las 10 peticiones
+    cloud_count = sum(1 for r in results if r[1] == "Cloud_Data")
+    local_count = sum(1 for r in results if r[1] == "Local_Data")
 
-    print("\n3. Gemini caido — con fallback a Ollama:")
-    fallback = FallbackAI(
-        primary=SimuladorGemini(falla=True),
-        secondary=SimuladorOllama(),
-    )
-    await medir("FallbackAI (Gemini->Ollama)", fallback)
-
-    print("\n4. Solo Ollama — siempre disponible pero mas lento:")
-    await medir("Solo Ollama (local)", SimuladorOllama())
-
-    print("\n=== Conclusiones ===")
-    print("""
-  Gemini disponible:    ~0.1s por request — ideal
-  Gemini caido sin proteccion: FALLA — sistema inutilizable
-  FallbackAI (Gemini->Ollama): primera request lenta (falla+fallback),
-                                las siguientes usan Ollama directamente
-                                (implementacion simple — sin estado)
-  Solo Ollama:          ~0.5s por request — predecible, sin riesgo
-
-  El fallback no es gratis: la primera llamada paga el costo
-  de intentar el primario. Un Circuit Breaker evita este costo
-  abriendo el circuito tras N fallos consecutivos.
-""")
+    logger.warning("=== REPORTE DE RESILIENCIA ===")
+    logger.info(f"Total procesadas : {len(results)}/10 (100% Uptime)")
+    logger.info(f"Atendidas x Nube : {cloud_count} (Rapidas)")
+    logger.info(f"Atendidas x Local: {local_count} (Salvadas por Fallback)")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    anyio.run(run_benchmark)

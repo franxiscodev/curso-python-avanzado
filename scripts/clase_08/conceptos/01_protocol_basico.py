@@ -1,70 +1,66 @@
-"""Concepto 01 — typing.Protocol: contratos sin herencia.
+"""
+Concepto 1: typing.Protocol y duck typing estructural.
 
-Un Protocol define QUE metodos debe tener un objeto, sin obligar a heredar.
-Duck typing estructural: si camina como pato y grazna como pato, es un pato.
+Protocol permite definir contratos de comportamiento sin forzar herencia.
+Cualquier clase que tenga los métodos con la firma correcta satisface
+el Protocol automáticamente — esto es duck typing estructural.
+
+RoutePort declara get_eta_minutes como async: los adaptadores que lo
+implementen también deben usar async def o los type checkers lo rechazan.
+
+@runtime_checkable habilita isinstance() en tiempo de ejecución.
+Sin él, isinstance(obj, RoutePort) lanzaría TypeError.
+La verificación solo comprueba que los métodos existen, no sus firmas —
+para la verificación completa de tipos hay que usar mypy/pyright.
+
+OpenRouteAdapter y GoogleMapsAdapter NO heredan de RoutePort.
+El isinstance check prueba que Python los reconoce como conformes
+solo por su estructura (duck typing).
+
+Conexión con el proyecto:
+  core/ports.py contiene WeatherPort, RoutePort, CachePort — el mismo
+  patrón. OpenWeatherAdapter y OpenRouteAdapter los implementan sin herencia.
 
 Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_08/conceptos/01_protocol_basico.py
-
-    # Linux
-    uv run scripts/clase_08/conceptos/01_protocol_basico.py
+  uv run python scripts/clase_08/conceptos/01_protocol_basico.py
 """
 
+import asyncio
 from typing import Protocol, runtime_checkable
 
 
-# --- Definicion del Protocol ---
-
+# 1. El Puerto (Lo que el Core exige)
 @runtime_checkable
-class Describible(Protocol):
-    """Cualquier objeto que tenga un metodo describe() es Describible."""
-
-    def describe(self) -> str:
+class RoutePort(Protocol):
+    async def get_eta_minutes(self, origin: str, destination: str) -> int:
+        """Devuelve el tiempo estimado de llegada en minutos."""
         ...
 
 
-# --- Implementaciones concretas (sin herencia) ---
-
-class Perro:
-    def describe(self) -> str:
-        return "Soy un perro"
-
-
-class Gato:
-    def describe(self) -> str:
-        return "Soy un gato"
+# 2. Los Adaptadores (Las implementaciones concretas)
+class OpenRouteAdapter:
+    async def get_eta_minutes(self, origin: str, destination: str) -> int:
+        print(f"[OpenRoute] Calculando ruta de {origin} a {destination}...")
+        await asyncio.sleep(0.1)  # Simulando I/O
+        return 45
 
 
-class Piedra:
-    pass  # No tiene describe() — NO satisface el Protocol
+class GoogleMapsAdapter:
+    async def get_eta_minutes(self, origin: str, destination: str) -> int:
+        print(f"[GoogleMaps] Calculando ruta de {origin} a {destination}...")
+        await asyncio.sleep(0.1)
+        return 42
 
 
-# --- Funcion que acepta cualquier Describible ---
+async def main():
+    # Validación estructural (Duck Typing)
+    ors_adapter = OpenRouteAdapter()
 
-def imprimir_descripcion(obj: Describible) -> None:
-    print(f"  Descripcion: {obj.describe()}")
+    # Mypy y el linter estarán felices si RoutePort es el tipo esperado
+    if isinstance(ors_adapter, RoutePort):
+        eta = await ors_adapter.get_eta_minutes("Madrid", "Valencia")
+        print(f"ETA: {eta} mins")
 
 
-# --- Demo ---
-
-print("=== isinstance con @runtime_checkable ===")
-perro = Perro()
-gato = Gato()
-piedra = Piedra()
-
-print(f"Perro satisface Describible:  {isinstance(perro, Describible)}")   # True
-print(f"Gato satisface Describible:   {isinstance(gato, Describible)}")    # True
-print(f"Piedra satisface Describible: {isinstance(piedra, Describible)}")  # False
-
-print()
-print("=== Uso polimórfico sin herencia ===")
-for animal in [perro, gato]:
-    imprimir_descripcion(animal)
-
-# Sin herencia = sin acoplamiento
-# Perro y Gato pueden existir en librerias distintas
-# y seguir siendo intercambiables aqui
-print()
-print("Perro y Gato NO heredan de Describible ni entre si.")
-print("El Protocol solo describe la forma, no impone jerarquia.")
+if __name__ == "__main__":
+    asyncio.run(main())

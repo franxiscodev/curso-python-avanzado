@@ -11,67 +11,40 @@ Ejecutar:
     uv run scripts/clase_05/conceptos/03_httpx_async_client.py
 """
 
-import time
-
 import anyio
 import httpx
+from pydantic import BaseModel, ValidationError
+from loguru import logger
 
 
-async def fetch_sincrono_simulado() -> None:
-    """Muestra el patron sincrono como referencia (usando httpx.Client)."""
-    print("=== httpx.Client (sincrono) — referencia ===")
-    print("  # Patron sincrono:")
-    print("  with httpx.Client() as client:")
-    print("      response = client.get(url)  # bloquea hasta recibir respuesta")
-    print("      data = response.json()")
-    print()
+class Post(BaseModel):
+    id: int
+    title: str
 
 
-async def peticion_simple() -> None:
-    """Una sola peticion asincrona."""
-    print("=== httpx.AsyncClient: una peticion ===")
-    inicio = time.perf_counter()
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get("https://httpbin.org/json")
+async def fetch_post(client: httpx.AsyncClient, post_id: int):
+    url = f"https://jsonplaceholder.typicode.com/posts/{post_id}"
+    try:
+        response = await client.get(url)
         response.raise_for_status()
-        data = response.json()
 
-    print(f"  Claves en respuesta: {list(data.keys())}")
-    print(f"  Tiempo: {time.perf_counter() - inicio:.2f}s")
-    print()
-
-
-async def peticiones_paralelas() -> None:
-    """Dos peticiones en paralelo usando task group."""
-    print("=== httpx.AsyncClient: dos peticiones en paralelo ===")
-    resultados: dict = {}
-    inicio = time.perf_counter()
-
-    async def fetch_a() -> None:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get("https://httpbin.org/get")
-            resultados["a"] = list(resp.json().keys())
-
-    async def fetch_b() -> None:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get("https://httpbin.org/ip")
-            resultados["b"] = list(resp.json().keys())
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(fetch_a)
-        tg.start_soon(fetch_b)
-
-    print(f"  Peticion A claves: {resultados.get('a')}")
-    print(f"  Peticion B claves: {resultados.get('b')}")
-    print(f"  Tiempo: {time.perf_counter() - inicio:.2f}s (ambas en paralelo)")
-    print()
+        # Parseo y validación estricta con Pydantic V2
+        post = Post.model_validate(response.json())
+        logger.success(f"Post {post.id} descargado: {post.title[:15]}...")
+    except ValidationError as e:
+        logger.error(f"Contrato roto en post {post_id}: {e}")
+    except httpx.HTTPError as e:
+        logger.error(f"Error de red: {e}")
 
 
-async def main() -> None:
-    await fetch_sincrono_simulado()
-    await peticion_simple()
-    await peticiones_paralelas()
+async def main():
+    # Un único cliente compartido por todas las tareas: reutiliza la conexión
+    # TCP (HTTP Keep-Alive) en lugar de abrir una nueva por cada request.
+    # Esto reduce la latencia total especialmente cuando hay TLS handshake.
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        async with anyio.create_task_group() as tg:
+            for i in range(1, 6):
+                tg.start_soon(fetch_post, client, i)
 
-
-anyio.run(main)
+if __name__ == "__main__":
+    anyio.run(main)

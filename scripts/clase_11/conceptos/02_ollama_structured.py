@@ -1,82 +1,69 @@
-"""Ollama con salida estructurada — JSON desde modelo local.
+"""
+Salida estructurada de Ollama con validación Pydantic V2.
 
-Demuestra:
-- Pedir JSON estructurado a un modelo local
-- Limpiar markdown que el modelo puede agregar (```json...```)
-- Validar la respuesta con un schema manual
+Demuestra el pipeline completo: prompt con schema explícito → JSON de Ollama → BaseModel:
+  - WeatherAdvice define el contrato (qué campos esperamos)
+  - format="json" en el payload instruye a Ollama a devolver JSON sin markdown
+  - model_validate_json valida el string de respuesta en un solo paso
+  - ValidationError captura el caso de "el modelo alucinó" con un campo incorrecto
 
-Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_11/conceptos/02_ollama_structured.py
+La combinación de format="json" + Pydantic es equivalente a lo que hace
+response_schema en el SDK de Gemini (Clase 10) — mismo patrón, distinta API.
 
-    # Linux
-    uv run scripts/clase_11/conceptos/02_ollama_structured.py
-
-Nota: modelos pequenos como gemma3:1b pueden no seguir el schema al 100%.
-Si la respuesta no es JSON valido, reintentar o usar modelo mas grande.
+Ejecutar (desde curso/):
+    uv run python scripts/clase_11/conceptos/02_ollama_structured.py
 """
 
-import asyncio
-import json
-
-import ollama
-
-PROMPT = """Dado que en Valencia hay 13C y cielo despejado, y en Madrid hay 3C y cielo claro:
-
-Responde UNICAMENTE con un JSON valido con esta estructura exacta:
-{
-  "ciudad_origen": "string",
-  "ciudad_destino": "string",
-  "recomendacion": "string — consejo de viaje",
-  "llevar": ["item1", "item2", "item3"]
-}
-
-No agregues texto ni explicaciones fuera del JSON."""
+import anyio
+import httpx
+from loguru import logger
+from pydantic import BaseModel, Field, ValidationError
 
 
-def clean_json(raw: str) -> str:
-    """Elimina el markdown que el modelo agrega a veces (```json...```)."""
-    clean = raw.strip()
-    if clean.startswith("```"):
-        parts = clean.split("```")
-        clean = parts[1] if len(parts) > 1 else clean
-        if clean.startswith("json"):
-            clean = clean[4:]
-    return clean.strip()
+# El contrato define exactamente qué campos y tipos esperamos del modelo
+class WeatherAdvice(BaseModel):
+    risk_level: str = Field(description="Nivel de riesgo: 'Bajo', 'Medio' o 'Alto'")
+    actionable_tip: str = Field(
+        description="Consejo práctico de conducción de máximo 15 palabras"
+    )
 
 
-async def main() -> None:
-    client = ollama.AsyncClient()
+async def get_structured_advice(weather_condition: str) -> WeatherAdvice:
+    logger.info(f"Solicitando consejo para clima: {weather_condition}")
 
-    print("=== Ollama con respuesta JSON estructurada ===")
-    print(f"Prompt enviado:\n{PROMPT}\n")
+    # El prompt pide JSON explícitamente con los nombres de campo del contrato
+    prompt = f"""
+    Genera un consejo de conducción para clima: {weather_condition}.
+    Responde estrictamente en JSON usando las llaves 'risk_level' y 'actionable_tip'.
+    """
 
-    try:
-        response = await client.chat(
-            model="gemma3:1b",
-            messages=[{"role": "user", "content": PROMPT}],
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        res = await client.post(
+            "http://127.0.0.1:11434/api/generate",
+            json={
+                "model": "gemma3:1b",
+                "prompt": prompt,
+                "format": "json",   # Ollama fuerza JSON sin bloques markdown
+                "stream": False,
+            },
         )
+        res.raise_for_status()
+        raw_json = res.json()["response"]  # string JSON devuelto por Ollama
 
-        raw = response.message.content
-        print(f"Respuesta cruda:\n{raw}\n")
-
-        clean = clean_json(raw)
-        print(f"JSON limpio:\n{clean}\n")
-
-        data = json.loads(clean)
-        print("=== Datos parseados ===")
-        print(f"  Origen:        {data.get('ciudad_origen', '?')}")
-        print(f"  Destino:       {data.get('ciudad_destino', '?')}")
-        print(f"  Recomendacion: {data.get('recomendacion', '?')}")
-        print(f"  Llevar:        {', '.join(data.get('llevar', []))}")
-
-    except json.JSONDecodeError as e:
-        print(f"  La respuesta no es JSON valido: {e}")
-        print("  Tip: modelos pequenos a veces ignoran el schema.")
-        print("       Prueba con un prompt mas restrictivo o un modelo mas grande.")
-    except Exception as e:
-        print(f"  Error: {e}")
-        print("  Verifica que Ollama esta corriendo: ollama serve")
+        # model_validate_json: parsea el string y valida tipos en un paso
+        # Si risk_level llega como "Extremo" (no en el contrato), lanza ValidationError
+        try:
+            validated_data = WeatherAdvice.model_validate_json(raw_json)
+            return validated_data
+        except ValidationError as e:
+            logger.error(f"La IA alucinó y rompió el contrato JSON: {e}")
+            raise
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    try:
+        advice = anyio.run(get_structured_advice, "Lluvia torrencial y granizo")
+        print(f"\n[RIESGO]: {advice.risk_level.upper()}")
+        print(f"[CONSEJO]: {advice.actionable_tip}")
+    except Exception:
+        print("Fallo en la extracción de datos.")

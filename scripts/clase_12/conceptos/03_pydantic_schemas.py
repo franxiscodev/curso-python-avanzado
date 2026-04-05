@@ -1,91 +1,54 @@
-"""Schemas Pydantic en FastAPI — request validation y OpenAPI.
+"""
+Concepto 3: Schemas Pydantic como contratos de entrada y salida.
 
-Demuestra:
-- Diferencia entre modelos de dominio y schemas HTTP (DTO pattern)
-- Validacion automatica de request body
-- Schema OpenAPI generado por Pydantic (lo que aparece en /docs)
-- Como Field(examples=...) mejora la documentacion interactiva
+FastAPI usa Pydantic V2 para validar automáticamente el cuerpo de las peticiones:
+- RoutingRequest valida la entrada: Field(...) requiere el campo, min_length
+  garantiza longitud mínima, pattern restringe los valores permitidos.
+- model_validator(mode="after") ejecuta validación cruzada entre campos:
+  origen y destino no pueden ser iguales — imposible de expresar con Field solo.
+- RoutingResponse filtra la salida: solo los campos declarados se serializan,
+  datos internos no se exponen accidentalmente.
 
-No ejecuta FastAPI — solo muestra validacion y schemas.
+Si el payload no cumple el contrato, FastAPI devuelve 422 automáticamente
+con detalle de qué campo falló — sin código adicional.
+
+response_model=RoutingResponse en el decorador activa el filtrado de salida.
 
 Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_12/conceptos/03_pydantic_schemas.py
-
-    # Linux
-    uv run scripts/clase_12/conceptos/03_pydantic_schemas.py
+  uv run uvicorn scripts.clase_12.conceptos.03_pydantic_schemas:app --reload
+  curl -X POST http://localhost:8000/route -H "Content-Type: application/json" \
+       -d '{"origin": "Valencia", "destination": "Madrid"}'
 """
 
-import json
+from fastapi import FastAPI
+from pydantic import BaseModel, Field, model_validator
 
-from pydantic import BaseModel, Field
-
-
-# ── Ejemplo de DTO pattern: dominio vs HTTP ───────────────────────────
-
-class ViajeInterno(BaseModel):
-    """Modelo de dominio — representa el concepto en el sistema."""
-    ciudad_origen: str
-    ciudad_destino: str
-    distancia_km: float
-    duracion_min: float
-    temperatura_origen: float
+app = FastAPI()
 
 
-class ViajeRequest(BaseModel):
-    """Schema HTTP de request — lo que el cliente envia."""
-    origen: str = Field(min_length=1, examples=["Valencia"])
-    destino: str = Field(min_length=1, examples=["Madrid"])
-    perfiles: list[str] = Field(
-        default=["driving-car"],
-        examples=[["driving-car", "cycling-regular"]],
+class RoutingRequest(BaseModel):
+    # Validaciones a nivel de campo (Field)
+    origin: str = Field(..., min_length=3, description="Ciudad de origen")
+    destination: str = Field(..., min_length=3, description="Ciudad destino")
+    transport_mode: str = Field(
+        default="driving", pattern="^(driving|transit|walking)$"
     )
-    incluir_ia: bool = Field(default=True, description="Generar recomendacion de IA")
+
+    # Validación cruzada a nivel de modelo
+    @model_validator(mode="after")
+    def check_different_locations(self) -> "RoutingRequest":
+        if self.origin.lower() == self.destination.lower():
+            raise ValueError("El origen y destino no pueden ser iguales.")
+        return self
 
 
-class ViajeResponse(BaseModel):
-    """Schema HTTP de response — lo que la API devuelve al cliente."""
-    origen: str
-    destino: str
-    distancia_km: float
-    duracion_min: float
-    recomendacion: str | None = None
+class RoutingResponse(BaseModel):
+    route_id: str
+    eta_mins: int
+    # Excluimos datos internos accidentalmente expuestos
 
 
-# ── Validacion de request ─────────────────────────────────────────────
-print("=== Validacion de request ===")
-
-try:
-    req = ViajeRequest(origen="Valencia", destino="Madrid")
-    print(f"  Valido: {req.model_dump()}")
-except Exception as e:
-    print(f"  Error: {e}")
-
-try:
-    req_invalido = ViajeRequest(origen="", destino="Madrid")
-except Exception as e:
-    print(f"  Invalido (origen vacio): {type(e).__name__}")
-
-# ── Schema OpenAPI generado ───────────────────────────────────────────
-print("\n=== Schema OpenAPI de ViajeRequest ===")
-schema = ViajeRequest.model_json_schema()
-print(json.dumps(schema, ensure_ascii=False, indent=2))
-print("\n→ Este schema aparece automaticamente en /docs de FastAPI")
-
-# ── Por que DTO y no reutilizar el modelo de dominio ─────────────────
-print("\n=== Por que separar dominio y HTTP ===")
-print("""
-  Modelo de dominio (ViajeInterno):
-    - Representa el concepto en el sistema
-    - Puede tener logica de negocio, validadores, computed fields
-    - No deberia depender del formato HTTP
-
-  Schema HTTP (ViajeRequest / ViajeResponse):
-    - Define el contrato con los clientes de la API
-    - Puede evolucionar independientemente del dominio
-    - Tiene Field(examples=...) para documentacion Swagger
-
-  Si manana cambia la estructura de la API (nuevo campo, renombrado),
-  solo cambia el schema HTTP — el dominio no se toca.
-  Este patron se llama DTO (Data Transfer Object).
-""")
+@app.post("/route", response_model=RoutingResponse)
+def create_route(payload: RoutingRequest):
+    # Si el flujo llega aquí, el payload está 100% garantizado y tipado.
+    return RoutingResponse(route_id="R-999", eta_mins=120)

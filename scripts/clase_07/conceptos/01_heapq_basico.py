@@ -1,42 +1,62 @@
-"""heapq basico — cola de prioridad con min-heap.
+"""
+heapq — Cola de prioridad con dataclass
+=========================================
+Demuestra el uso de heapq como cola de prioridad para procesar
+peticiones de API según su nivel de urgencia.
 
-Demuestra la propiedad fundamental: el minimo siempre esta en heap[0],
-sin importar el orden de insercion. Sin imports de pycommute.
+Conceptos que ilustra:
+- @dataclass(order=True): habilita la comparación (<) entre instancias;
+  heapq usa este orden para mantener el invariante del heap.
+- field(compare=False): excluye 'payload' de las comparaciones,
+  evitando TypeError si dos peticiones tienen la misma prioridad y timestamp.
+- heappush / heappop: O(log n) para insertar y extraer el mínimo.
+- Desempate por timestamp: dentro de la misma prioridad, la petición
+  más antigua (menor timestamp) se procesa primero (FIFO natural).
 
 Ejecutar:
-    uv run scripts/clase_07/conceptos/01_heapq_basico.py
+    uv run python scripts/clase_07/conceptos/01_heapq_basico.py
 """
-
 import heapq
+import time
+from dataclasses import dataclass, field
+from typing import Any
 
-# ── Min-heap — el minimo siempre en heap[0] ──────────────────────
-numeros = [5, 2, 8, 1, 9, 3]
-heap: list[int] = []
 
-print("Insertando uno por uno:")
-for n in numeros:
-    heapq.heappush(heap, n)
-    print(f"  heappush({n}) -> heap[0] = {heap[0]}  (siempre el minimo)")
+@dataclass(order=True)
+class ApiRequest:
+    # El orden de los atributos importa para la comparación de heapq.
+    # Primero compara prioridad (menor número = más urgente).
+    prioridad: int
 
-print("\nExtrayendo en orden:")
-while heap:
-    print(f"  heappop() -> {heapq.heappop(heap)}")
+    # Segundo compara timestamp para desempate (FIFO dentro de la misma prioridad).
+    timestamp: float = field(default_factory=time.time)
 
-# ── heapify — convertir lista existente en heap O(n) ─────────────
-print("\nheapify sobre lista existente (O(n)):")
-datos = [5, 2, 8, 1, 9, 3]
-heapq.heapify(datos)
-print(f"  antes: [5, 2, 8, 1, 9, 3]")
-print(f"  despues: {datos}")
-print(f"  datos[0] = {datos[0]}  (el minimo, garantizado)")
+    # Campo ignorado en la ordenación, contiene la carga útil.
+    payload: dict[str, Any] = field(compare=False, default_factory=dict)
 
-# ── nsmallest y nlargest ─────────────────────────────────────────
-print("\nnsmallest y nlargest:")
-valores = [5, 2, 8, 1, 9, 3, 7, 4, 6]
-print(f"  nsmallest(3): {heapq.nsmallest(3, valores)}  O(n) para k pequeno")
-print(f"  nlargest(3):  {heapq.nlargest(3, valores)}   O(n) para k pequeno")
-print()
-print("Cuando usar cada uno:")
-print("  heappush/heappop: inserciones frecuentes, siempre el minimo")
-print("  nsmallest(1):     obtener el minimo una sola vez, sin modificar la lista")
-print("  sorted():         cuando necesitas la lista completa ordenada")
+
+def main():
+    cola_peticiones: list[ApiRequest] = []
+
+    # Simulamos peticiones llegando en distinto orden
+    # Premium = 1, Estandar = 2, Background = 3
+    heapq.heappush(cola_peticiones, ApiRequest(
+        prioridad=2, payload={"user": "juan_free", "action": "read"}))
+    time.sleep(0.01)  # Forzamos diferencia en timestamp
+    heapq.heappush(cola_peticiones, ApiRequest(prioridad=1, payload={
+                   "user": "maria_premium", "action": "write"}))
+    time.sleep(0.01)
+    heapq.heappush(cola_peticiones, ApiRequest(
+        prioridad=1, payload={"user": "ceo_admin", "action": "delete"}))
+
+    # heappop garantiza que siempre sale la peticion mas prioritaria
+    print("Procesando peticiones por prioridad (Min-Heap):")
+    while cola_peticiones:
+        # Extraemos siempre la petición más prioritaria en O(log n)
+        req = heapq.heappop(cola_peticiones)
+        print(
+            f"[{req.prioridad}] Procesando: {req.payload['user']} - {req.payload['action']}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,45 +1,62 @@
-"""deque basico — cola doble eficiente con maxlen.
+"""
+deque con maxlen — Buffer circular para eventos del sistema
+==========================================================
+Demuestra deque(maxlen=N) como ring buffer: cuando el buffer está
+lleno y se añade un nuevo evento, el más antiguo se descarta automáticamente.
 
-Demuestra append/pop desde ambos extremos en O(1) y el
-comportamiento de descarte automatico con maxlen.
-Sin imports de pycommute.
+Conceptos que ilustra:
+- deque(maxlen=N): activa el modo ring buffer; no es necesario gestionar
+  el tamaño manualmente — la estructura lo hace sola.
+- append() con buffer lleno: descarta el elemento del lado izquierdo
+  (el más antiguo) y añade el nuevo al lado derecho. Todo en O(1).
+- SystemEvent como @dataclass: genera __init__ y __repr__ automáticamente
+  sin boilerplate.
+- Uso real: retener las últimas N métricas, logs o eventos de un stream
+  sin acumular memoria ilimitada.
 
 Ejecutar:
-    uv run scripts/clase_07/conceptos/03_deque_basico.py
+    uv run python scripts/clase_07/conceptos/03_deque_basico.py
 """
-
 from collections import deque
+from dataclasses import dataclass
+from typing import Any
 
-# ── deque basico — ambos extremos ────────────────────────────────
-d: deque[str] = deque()
-d.append("C")       # agrega a la derecha
-d.appendleft("A")   # agrega a la izquierda
-d.append("D")
-d.appendleft("inicio")
 
-print(f"deque: {list(d)}")
-print(f"pop():      {d.pop()}     <- extrae del lado derecho")
-print(f"popleft():  {d.popleft()}  <- extrae del lado izquierdo")
-print(f"despues:    {list(d)}")
+@dataclass
+class SystemEvent:
+    event_id: int
+    payload: dict[str, Any]
 
-# ── deque con maxlen — descarte automatico ────────────────────────
-print("\ndeque con maxlen=3 (historial de ultimas 3 consultas):")
-historial: deque[str] = deque(maxlen=3)
-ciudades = ["Valencia", "Madrid", "Barcelona", "Sevilla", "Bilbao"]
 
-for ciudad in ciudades:
-    historial.append(ciudad)
-    print(f"  append({ciudad:<12}) -> {list(historial)}")
+class EventBuffer:
+    def __init__(self, max_capacity: int = 5):
+        # maxlen convierte el deque en un ring buffer nativo en C.
+        # Cuando se llena, append() descarta el evento más antiguo sin error.
+        self._buffer: deque[SystemEvent] = deque(maxlen=max_capacity)
 
-print(f"\nSolo se conservan las ultimas {historial.maxlen} consultas.")
-print(f"Valencia y Madrid fueron descartadas automaticamente.")
+    def ingest(self, event: SystemEvent) -> None:
+        """Ingiere un evento. Si el buffer está lleno, descarta el más antiguo."""
+        self._buffer.append(event)
 
-# ── Otros metodos utiles ──────────────────────────────────────────
-print("\nOtros metodos:")
-d2: deque[int] = deque([1, 2, 3, 4, 5])
-print(f"  original:      {list(d2)}")
-d2.rotate(2)   # mueve los ultimos 2 elementos al principio
-print(f"  rotate(2):     {list(d2)}")
-d2.rotate(-2)  # deshace
-print(f"  rotate(-2):    {list(d2)}")
-print(f"  [0]:           {d2[0]}  (acceso por indice O(1) en extremos, O(n) en medio)")
+    def show_snapshot(self) -> None:
+        print(
+            f"Estado del Buffer (Ocupacion: {len(self._buffer)}/{self._buffer.maxlen}):")
+        for ev in self._buffer:
+            print(f"  -> Evento {ev.event_id}: {ev.payload}")
+        print("-" * 40)
+
+
+def main():
+    stream = EventBuffer(max_capacity=3)
+
+    # Metemos 5 eventos en un buffer de capacidad 3.
+    # Los eventos 1 y 2 serán descartados cuando lleguen 4 y 5.
+    print("Iniciando ingesta de metricas (Capacidad estricta: 3)...\n")
+    for i in range(1, 6):
+        print(f"Ingiriendo Evento {i}...")
+        stream.ingest(SystemEvent(event_id=i, payload={"cpu": 40 + i}))
+        stream.show_snapshot()
+
+
+if __name__ == "__main__":
+    main()

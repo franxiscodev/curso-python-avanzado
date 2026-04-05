@@ -1,36 +1,48 @@
-"""Demo match/case vs if/elif/else — Clase 2, Concepto 4.
+"""match/case vs if/elif: comparativa sobre el mismo JSON anidado.
 
-Comparativa directa del mismo problema con ambos enfoques.
-match/case gana legibilidad cuando la estructura del dato importa.
-if/elif es preferible cuando la condición es aritmética o booleana simple.
+Demuestra las dos aproximaciones al mismo problema de parsing:
+- parse_imperativo(): if/elif encadenados con accesos .get() y isinstance()
+- parse_declarativo(): match/case con patrón de mapping anidado
 
-Ejecuta este script con:
-    uv run scripts/clase_02/conceptos/04_match_case_vs_if_else.py
+El dict tiene tres niveles de profundidad:
+  datos["tipo"] == "mensaje_texto"
+  datos["contenido"]               ← capturado como `msg`
+  datos["metadata"]["urgencia"]    ← anidado en el patrón directamente
+
+La versión declarativa expresa la forma esperada del dato en una sola línea
+de patrón; la imperativa necesita tres niveles de if anidados para lo mismo.
+
+Ejecutar (desde curso/):
+    uv run python scripts/clase_02/conceptos/04_match_case_vs_if_else.py
 """
 
-data = {"status": "ok", "value": 42}
+mensaje = {"tipo": "mensaje_texto", "contenido": "Hola equipo",
+           "metadata": {"urgencia": "alta"}}
 
-# --- Con if/elif/else ---
-# Hay que verificar la existencia de cada clave manualmente
-if "status" in data and data["status"] == "ok" and "value" in data:
-    resultado_if = f"Valor: {data['value']}"
-elif "status" in data and data["status"] == "error" and "message" in data:
-    resultado_if = f"Error: {data['message']}"
-else:
-    resultado_if = "Desconocido"
+# --- El infierno del Junior (Imperativo) ---
 
-# --- Con match/case ---
-# El patrón describe la estructura esperada — más declarativo
-match data:
-    case {"status": "ok", "value": v}:
-        resultado_match = f"Valor: {v}"
-    case {"status": "error", "message": msg}:
-        resultado_match = f"Error: {msg}"
-    case _:
-        resultado_match = "Desconocido"
 
-print(f"if/else:    {resultado_if}")
-print(f"match/case: {resultado_match}")
-print()
-print("Mismo resultado. match/case es mas legible con estructuras complejas.")
-print("Regla: usa match/case cuando parseas JSONs o estructuras de datos.")
+def parse_imperativo(data: dict) -> str:
+    if "tipo" in data and data["tipo"] == "mensaje_texto":
+        if "contenido" in data:
+            contenido = data["contenido"]
+            if "metadata" in data and "urgencia" in data["metadata"] and data["metadata"]["urgencia"] == "alta":
+                return f"[URGENTE] Dice: {contenido}"
+            return f"Dice: {contenido}"
+    return "Desconocido"
+
+# --- El estándar Senior (Declarativo) ---
+
+
+def parse_declarativo(data: dict) -> str:
+    match data:
+        case {"tipo": "mensaje_texto", "contenido": msg, "metadata": {"urgencia": "alta"}}:
+            return f"[URGENTE] Dice: {msg}"
+        case {"tipo": "mensaje_texto", "contenido": msg}:
+            return f"Dice: {msg}"
+        case _:
+            return "Desconocido"
+
+
+print(f"Resultado Imperativo:  {parse_imperativo(mensaje)}")
+print(f"Resultado Declarativo: {parse_declarativo(mensaje)}")

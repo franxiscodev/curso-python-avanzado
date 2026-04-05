@@ -1,308 +1,378 @@
 # Conceptos — Clase 01: El Setup Profesional
 
-Cinco conceptos que usarás en cada clase del curso.
-Cada sección tiene un ejemplo que puedes copiar y ejecutar por tu cuenta.
+Cinco herramientas que usarás en cada clase del curso.
+Esta sección explica qué hace cada una, por qué existe y cómo usarla.
 
 ---
 
-## 1. UV — El gestor de entornos moderno
+## 1. El stack del curso — por qué estas cinco herramientas
 
-### ¿Qué problema resuelve?
+En Python hay decenas de formas de instalar dependencias, hacer peticiones HTTP
+o gestionar secretos. En este curso elegimos un conjunto específico y lo usamos
+de forma consistente desde la Clase 1.
 
-El flujo clásico de Python tiene demasiados pasos:
+### Las cinco piezas
 
+| Herramienta | Qué hace | Por qué la elegimos |
+|-------------|----------|---------------------|
+| `uv` | Gestiona entornos virtuales y dependencias | Reproducibilidad garantizada via lock file |
+| Src layout | Estructura del paquete | Evita importar código roto sin saberlo |
+| `httpx` | Cliente HTTP | Soporta sync y async con la misma API |
+| Type hints | Anotaciones de tipos | El IDE ayuda más; mypy detecta errores antes |
+| `python-dotenv` | Lee archivos `.env` | Mantiene los secretos fuera del código |
+
+### Cómo encajan
+
+El flujo completo de la aplicación que construiremos:
+
+```
+.env ──► python-dotenv ──► os.getenv("API_KEY")
+                                  │
+                              httpx.Client
+                                  │
+                              JSON response
+                                  │
+                          funciones con type hints
+```
+
+Cada herramienta tiene un rol preciso. Si falta una, aparece un problema concreto:
+sin `uv`, el entorno no es reproducible; sin type hints, el IDE no puede ayudarte;
+sin `.env`, la key queda expuesta en git para siempre.
+
+---
+
+## 2. UV — Entorno aislado y reproducible
+
+### El problema que resuelve
+
+El flujo clásico tiene dos problemas:
+
+**1. Demasiados pasos:**
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # o .venv\Scripts\activate en Windows
+source .venv/bin/activate
 pip install httpx
 pip freeze > requirements.txt
 ```
 
-El problema: `requirements.txt` no garantiza que dos instalaciones produzcan
-exactamente el mismo entorno. Un paquete que hoy instala la versión `1.2.3`
-puede instalar `1.2.4` mañana en otra máquina.
+**2. `requirements.txt` no garantiza reproducibilidad:**
+`pip install -r requirements.txt` hoy puede instalar `httpx==0.27.2`
+y mañana en otra máquina instalar `httpx==0.28.0`. El código puede romperse
+sin que nadie cambie nada.
 
-`uv` reemplaza todo eso con tres comandos:
+### La solución: lock file
 
-```bash
-uv sync          # instala todo lo que define pyproject.toml (reproducible)
-uv add httpx     # agrega una dependencia y actualiza el lock file
-uv run pytest    # ejecuta un comando sin activar el entorno
+`uv` usa un archivo `uv.lock` que registra las versiones exactas con hashes:
+
+```toml
+[[package]]
+name = "httpx"
+version = "0.27.2"
+[[package.metadata.files]]
+name = "httpx-0.27.2-py3-none-any.whl"
+hash = "sha256:a8d9..."
 ```
 
-### El lock file
+El hash garantiza que si alguien modifica el paquete en PyPI, `uv sync` detecta
+la diferencia y falla — en lugar de instalar silenciosamente algo distinto.
 
-Cuando ejecutas `uv add httpx`, `uv` crea (o actualiza) `uv.lock` con las
-versiones exactas de `httpx` y todas sus dependencias. Ese archivo se versiona
-en git. Resultado: todos en el proyecto instalan **exactamente** las mismas versiones.
-
-### Pruébalo
+### Los tres comandos que usarás siempre
 
 ```bash
 # Windows (PowerShell) y Linux (idéntico)
-mkdir mi-prueba
-cd mi-prueba
-uv init
-uv add httpx
-uv run python -c "import httpx; print(httpx.__version__)"
+uv sync                          # instala todo lo que define pyproject.toml
+uv add httpx                     # agrega dependencia y actualiza uv.lock
+uv run python scripts/...        # ejecuta sin activar el entorno manualmente
 ```
 
+### Qué verifica el script
+
+`01_uv_demo.py` comprueba si `sys.prefix != sys.base_prefix`.
+Cuando difieren, el intérprete activo es el del entorno virtual, no el del sistema.
+
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_01/conceptos/01_uv_demo.py`
+  `uv run python scripts/clase_01/conceptos/01_uv_demo.py`
+
+### Analiza la salida
+
+```
+¿Entorno aislado?: True
+Ruta activa: C:\...\pycommute-elite\curso\.venv
+```
+
+- `True` confirma que estás dentro del entorno de `uv`.
+- La ruta apunta a `.venv/` dentro del proyecto, no al Python del sistema.
+- Si ves `False`, ejecuta `uv sync` desde la carpeta `curso/`.
 
 ---
 
-## 2. Src Layout — La estructura estándar de un paquete Python
+## 3. Src Layout — El paquete solo existe si está instalado
 
-### ¿Qué es?
+### El problema que resuelve
 
-Src layout es una convención donde el código del paquete vive dentro de `src/`:
+Si el paquete está en la raíz del proyecto:
 
 ```
-mi-proyecto/
+proyecto/
+├── mipaquete/    ← aquí
+│   └── __init__.py
+└── tests/
+```
+
+Cuando ejecutas `pytest` desde `proyecto/`, Python añade `proyecto/` a `sys.path`.
+`import mipaquete` encuentra el paquete **directamente en el disco**, sin instalarlo.
+
+Consecuencia: si `pyproject.toml` tiene un error que impide la instalación, los tests
+siguen pasando en tu máquina. En CI (donde el paquete se instala desde cero), fallan.
+
+### La solución: mover el código a `src/`
+
+```
+proyecto/
 ├── src/
-│   └── mipaquete/        ← aquí vive el código
+│   └── mipaquete/    ← aquí
 │       └── __init__.py
-├── tests/
-│   └── test_algo.py
-└── pyproject.toml
+└── tests/
 ```
 
-### ¿Por qué no poner el paquete en la raíz?
+`src/` no está en `sys.path` por defecto. `import mipaquete` solo funciona si el
+paquete está instalado. Esto fuerza paridad entre tu entorno local y producción.
 
-Si el paquete está en la raíz (`mi-proyecto/mipaquete/`), cuando ejecutas
-`pytest` desde `mi-proyecto/`, Python puede importar el paquete directamente
-del disco en lugar del paquete instalado. Esto puede ocultar errores de
-instalación que solo aparecerían en otro equipo o en producción.
+Cuando ejecutas `uv sync`, `uv` crea un archivo `.pth` en el entorno:
 
-Con src layout, `import mipaquete` solo funciona si el paquete está
-correctamente instalado. Eso garantiza paridad entre tu entorno local y producción.
-
-### Pruébalo
-
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-mkdir -p src/mipaquete
+```
+# .venv/lib/python3.12/site-packages/pycommute.pth
+/ruta/absoluta/proyecto/src
 ```
 
-```python
-# src/mipaquete/__init__.py
-__version__ = "0.1.0"
-```
+Este `.pth` añade `src/` al path al iniciar Python — sin necesidad de reconstruir
+el paquete en cada cambio de código.
 
-Con un `pyproject.toml` que tenga `packages = ["src/mipaquete"]`:
+### Qué verifica el script
 
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv sync
-uv run python -c "import mipaquete; print(mipaquete.__version__)"
-# 0.1.0
-```
+`02_src_layout_demo.py` comprueba si el directorio actual está en `sys.path`.
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_01/conceptos/02_src_layout_demo.py`
+  `uv run python scripts/clase_01/conceptos/02_src_layout_demo.py`
+
+### Analiza la salida
+
+```
+¿Directorio actual expuesto en sys.path?: False
+En un flat-layout esto sería True. Con src-layout, es mitigado.
+```
+
+- `False` confirma que el directorio de trabajo no está expuesto directamente.
+- Con flat-layout (paquete en la raíz) verías `True`, y el riesgo de import
+  shadowing estaría activo.
 
 ---
 
-## 3. httpx — El cliente HTTP moderno
+## 4. httpx — Cliente HTTP con control de errores
 
-### ¿Qué hace httpx?
+### El problema que resuelve
 
-`httpx` es una librería para hacer peticiones HTTP. La usamos para hablar
-con APIs externas que devuelven datos en formato JSON.
+Una llamada HTTP puede fallar de tres formas distintas:
 
-### El ejemplo mínimo
+| Tipo de fallo | Qué ocurre | Excepción |
+|---------------|------------|-----------|
+| Error del servidor | La API devuelve 4xx/5xx | `HTTPStatusError` |
+| Red interrumpida | No hay respuesta | `RequestError` |
+| API lenta | El servidor tarda demasiado | `TimeoutException` |
+
+`requests` no tiene timeout por defecto — una llamada sin respuesta puede
+bloquear el hilo indefinidamente. `httpx` tiene timeout de 5s por defecto,
+y permite configurarlo con precisión.
+
+### El patrón con context manager
 
 ```python
 import httpx
 
-with httpx.Client() as client:
-    response = client.get("https://httpbin.org/json")
-    response.raise_for_status()   # lanza excepción si hay error (404, 500...)
-    data = response.json()        # convierte la respuesta JSON a dict
-
-print(data)
+with httpx.Client(timeout=3.0) as client:
+    response = client.get("https://api.ejemplo.com/datos")
+    response.raise_for_status()   # convierte 4xx/5xx en excepción
+    data = response.json()        # solo llega aquí si el código fue 2xx
 ```
 
-El `with httpx.Client() as client:` (context manager) garantiza que la
-conexión se cierra correctamente aunque ocurra un error.
+`with httpx.Client() as client:` garantiza que el pool de conexiones se cierra
+correctamente aunque ocurra un error.
 
-### ¿Por qué httpx y no requests?
+### Los tres escenarios del script
 
-`requests` es la librería más conocida y funciona bien para el caso síncrono.
-`httpx` añade:
-
-- Soporte para llamadas **asíncronas** nativo (`AsyncClient`)
-- Timeouts explícitos por defecto (requests no tiene timeout por defecto)
-- La misma API para modo sync y async: aprender uno sirve para los dos
-
-### Pruébalo
-
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv run python -c "
-import httpx
-with httpx.Client() as client:
-    r = client.get('https://httpbin.org/get')
-    print(r.json()['url'])
-"
-```
+`03_httpx_demo.py` demuestra los tres casos con `httpbin.org`:
+- **Escenario 1** (`/status/200`): la llamada exitosa — verifica que el "camino feliz" funciona.
+- **Escenario 2** (`/status/404`): el servidor devuelve error — `raise_for_status()` lo convierte en `HTTPStatusError`.
+- **Escenario 3** (`/delay/5`): el servidor tarda 5s pero el cliente tiene timeout de 3s — se lanza `TimeoutException`.
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_01/conceptos/03_httpx_demo.py`
+  `uv run python scripts/clase_01/conceptos/03_httpx_demo.py`
+
+### Analiza la salida
+
+```
+[*] ESCENARIO 1: El Camino Feliz (200 OK)
+    [OK] Exito absoluto. Codigo de estado: 200
+
+[*] ESCENARIO 2: Fallo del Servidor (404 Not Found)
+    [CONTROLADO] El servidor rechazo la peticion con codigo 404
+
+[*] ESCENARIO 3: La API se queda colgada (Timeout)
+    [TIMEOUT] La API tardo demasiado. El cliente corto la conexion para salvar el hilo.
+```
+
+Cada escenario tiene su excepción específica — el código nunca llega a un estado
+desconocido. En la Clase 3 añadiremos `@retry` para reintentar automáticamente
+en los escenarios 2 y 3.
 
 ---
 
-## 4. Type Hints — Tipos en Python
+## 5. Type Hints — TypedDict y Literal
 
-### ¿Qué son?
+### El problema que resuelven
 
-Los type hints son anotaciones que indican qué tipo de dato acepta una función
-y qué tipo devuelve:
-
-```python
-# Sin type hints — ¿qué acepta? ¿qué devuelve?
-def process(data, limit):
-    ...
-
-# Con type hints — queda claro de un vistazo
-def process(data: list[str], limit: int) -> dict[str, int]:
-    ...
-```
-
-### ¿Para qué sirven?
-
-**1. El IDE te ayuda más:**
-```python
-result = process(["a", "b"], 10)
-result.  # el IDE sabe que result es dict[str, int] → sugiere .keys(), .values()...
-```
-
-**2. Detectan errores antes de ejecutar:**
-```python
-def greet(name: str) -> str:
-    return f"Hola {name}"
-
-greet(42)  # mypy avisa: Argument 1 has incompatible type "int"; expected "str"
-```
-
-**3. Documentación que no puede desincronizarse:**
-El tipo en la firma siempre describe lo que acepta la función.
-
-### Sintaxis básica
+Sin type hints, un dict es opaco:
 
 ```python
-# Tipos simples
-def suma(a: int, b: int) -> int:
-    return a + b
-
-# Listas y diccionarios
-def promedio(numeros: list[float]) -> float:
-    return sum(numeros) / len(numeros)
-
-# Valor opcional (puede ser str o None)
-def buscar(nombre: str) -> str | None:
-    ...
-
-# Sin valor de retorno
-def configurar() -> None:
-    ...
+def analyze_route(route):
+    mode = route["transport_mode"]  # ¿qué valores acepta? no se sabe
 ```
 
-### Importante: no son validación en runtime
+Con `TypedDict` y `Literal`, el contrato queda explícito en el código:
 
 ```python
-def suma(a: int, b: int) -> int:
-    return a + b
+from typing import TypedDict, Literal
 
-# Python NO lanza error aunque los tipos sean incorrectos:
-suma("hola", "mundo")  # devuelve "holamundo" sin quejarse
+class CommuteRoute(TypedDict):
+    origin: str
+    destination: str
+    distance_km: float
+    transport_mode: Literal["driving", "walking", "transit"]
 ```
 
-Los type hints los comprueban herramientas externas (`mypy`, el IDE),
-no el intérprete de Python. Para validación en runtime se usa Pydantic.
+Ahora el IDE autocompletea las claves y mypy rechaza valores fuera del conjunto
+de `Literal` antes de ejecutar el código.
 
-### Pruébalo
+### TypedDict — la forma exacta de un diccionario
+
+`TypedDict` define qué claves tiene un diccionario y qué tipo tiene cada una.
+A diferencia de `dict[str, Any]`, el IDE sabe exactamente qué esperar:
 
 ```python
-def describe_temperature(temp: float, unit: str) -> str:
-    return f"{temp:.1f}°{unit}"
-
-result: str = describe_temperature(24.5, "C")
-print(result)  # 24.5°C
+route: CommuteRoute = {
+    "origin": "Casa",
+    "destination": "Oficina",
+    "distance_km": 2.5,
+    "transport_mode": "walking"   # mypy acepta solo los 3 valores del Literal
+}
 ```
+
+### Literal — valores permitidos, no tipos genéricos
+
+`Literal["driving", "walking", "transit"]` es más restrictivo que `str`.
+mypy rechaza cualquier valor que no esté en la lista:
+
+```python
+# Esto hace explotar mypy:
+route["transport_mode"] = "flying"  # error: "flying" no está en el Literal
+```
+
+### Los tipos no validan en runtime
+
+```python
+route["transport_mode"] = "flying"   # Python NO lanza error en ejecución
+```
+
+Los type hints son para herramientas estáticas (IDE, mypy). Para validación
+en runtime se usa Pydantic — lo veremos en la Clase 8.
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_01/conceptos/04_type_hints_demo.py`
+  `uv run python scripts/clase_01/conceptos/04_type_hints_demo.py`
+
+### Analiza la salida
+
+```
+Ruta viable usando walking.
+```
+
+El script ejecuta `analyze_route(valid_route)`. Descomenta el bloque `invalid_route`
+al final y ejecuta `mypy scripts/clase_01/conceptos/04_type_hints_demo.py` para ver
+cómo mypy detecta los dos problemas (campo faltante y valor fuera del Literal).
 
 ---
 
-## 5. Variables de Entorno y `.env` — Gestión de secretos
+## 6. Variables de entorno y `.env` — Gestión segura de secretos
 
-### El problema
+### El problema que resuelve
 
-Una API key es una contraseña. Si la escribes en el código y haces commit,
-queda expuesta en el historial de git para siempre:
+Una API key es una contraseña. Si la escribes en el código:
 
 ```python
-# ❌ Nunca hagas esto
+# Nunca hagas esto
 API_KEY = "sk-abc123xyz789..."
 ```
 
+Queda expuesta en el historial de git para siempre, aunque la borres después.
+Recuperarla requiere reescribir el historial (`git filter-repo`), lo que
+afecta a todos los colaboradores.
+
 ### La solución: archivo `.env`
 
-Crea un archivo `.env` en la raíz del proyecto (nunca lo versiones en git):
-
 ```env
-API_KEY=tu_key_aqui
-APP_ENV=development
+# .env  —  nunca lo subas a git
+API_KEY=sk-live-123456789
+APP_ENV=produccion
 ```
-
-Luego léelo desde Python con `python-dotenv`:
 
 ```python
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # carga las variables de .env al entorno
-
-api_key = os.getenv("API_KEY")
-print(api_key)  # tu_key_aqui
+load_dotenv()                          # inyecta .env en os.environ
+api_key = os.getenv("API_KEY")         # str | None
+entorno = os.getenv("APP_ENV", "dev")  # con valor por defecto
 ```
 
 ### El patrón `.env` / `.env.example`
 
 ```
-.env          ← secrets reales — NUNCA lo subas a git (en .gitignore)
-.env.example  ← plantilla con valores ficticios — SÍ se sube a git
+.env          ← secrets reales — NUNCA en git (.gitignore)
+.env.example  ← plantilla con valores ficticios — SÍ en git
 ```
-
-Cuando alguien clona el proyecto:
 
 ```bash
 # Windows (PowerShell)
 Copy-Item .env.example .env
-# editar .env con las keys reales
 
 # Linux
 cp .env.example .env
-# editar .env con las keys reales
 ```
 
-### Pruébalo
+Un desarrollador nuevo puede levantar el proyecto en minutos:
+el `.env.example` documenta exactamente qué variables se necesitan.
 
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-echo "APP_NAME=MiApp" > .env
-```
+### Qué demuestra el script
 
-```python
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-print(os.getenv("APP_NAME"))  # MiApp
-```
+`05_dotenv_demo.py` crea un `.env.local` temporal, lo inyecta con `load_dotenv`,
+lee los valores, enmascara la key para el log y borra el archivo en el bloque `finally`.
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_01/conceptos/05_dotenv_demo.py`
+  `uv run python scripts/clase_01/conceptos/05_dotenv_demo.py`
+
+### Analiza la salida
+
+```
+[*] Creando archivo .env.local en disco...
+[*] El archivo se creará en: C:\...\pycommute-elite\curso\.env.local
+[*] Secretos inyectados en memoria.
+
+[ENV] Entorno activo: produccion
+[KEY] API Key cargada: sk-live...789
+
+[*] Limpieza: .env.local eliminado del disco.
+```
+
+- `finally` garantiza que el archivo se borra incluso si el código anterior lanza una excepción.
+- La key aparece como `sk-live...789` — nunca se loguea completa.
+- En la Clase 3 reemplazamos `os.getenv` por `pydantic-settings`, que valida los tipos
+  y falla en startup si falta una variable obligatoria.

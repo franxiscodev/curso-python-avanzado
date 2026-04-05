@@ -43,7 +43,7 @@ RESPUESTA_JSON_INVALIDA = "Lo siento, no puedo procesar esa solicitud en este mo
 #   - Una línea con el contexto: "Contexto: {contexto}"
 #   - Una línea con la pregunta: "¿Cómo es el clima en {ciudad} hoy?"
 #   - Una línea indicando el formato: "Responde en JSON con keys: resumen, recomendacion."
-# Pista: repasa "Construcción de prompts" en 01_conceptos.md
+# Pista: sección 5 (Inyección de contexto al LLM) en 01_conceptos.md — función build_context_prompt
 def construir_prompt_clima(ciudad: str, contexto: str) -> str:
     pass  # ← reemplazar con tu implementación
 
@@ -58,7 +58,7 @@ def construir_prompt_clima(ciudad: str, contexto: str) -> str:
 #   - Intentar hacer json.loads(json_str) para obtener un dict
 #   - Construir y retornar ResumenClima(**dict_parseado)
 #   - Si json.loads lanza json.JSONDecodeError, retornar None
-# Pista: repasa "Parseo de respuestas JSON" en 01_conceptos.md
+# Pista: sección 3 (Salida estructurada con Pydantic) en 01_conceptos.md — model_validate_json
 def parsear_respuesta(json_str: str) -> Optional[ResumenClima]:
     pass  # ← reemplazar con tu implementación
 
@@ -73,7 +73,7 @@ def parsear_respuesta(json_str: str) -> Optional[ResumenClima]:
 #   - Iterar sobre la lista de strings
 #   - Retornar el primer string que se pueda parsear con json.loads sin error
 #   - Si ninguno es válido, retornar None
-# Pista: repasa "Resiliencia ante respuestas malformadas" en 01_conceptos.md
+# Pista: sección 6 (Rate limits y manejo de errores) en 01_conceptos.md — json.JSONDecodeError
 def primera_valida(respuestas: list[str]) -> Optional[str]:
     pass  # ← reemplazar con tu implementación
 
@@ -91,8 +91,8 @@ def primera_valida(respuestas: list[str]) -> Optional[str]:
 # Ejemplo:
 #   ejemplos = [("¿Clima en Madrid?", '{"resumen": "Frío", "recomendacion": "Abrigo"}')]
 #   pregunta = "¿Clima en Valencia?"
-#   → "Ejemplos:\nP: ¿Clima en Madrid?\nR: {...}\nP: ¿Clima en Valencia?\nR:"
-# Pista: repasa "Few-shot prompting" en 01_conceptos.md
+#   -> "Ejemplos:\nP: ¿Clima en Madrid?\nR: {...}\nP: ¿Clima en Valencia?\nR:"
+# Pista: sección 5 (Inyección de contexto al LLM) en 01_conceptos.md — patrón build_context_prompt
 def construir_prompt_fewshot(ejemplos: list[tuple[str, str]], pregunta: str) -> str:
     pass  # ← reemplazar con tu implementación
 
@@ -121,7 +121,7 @@ def demo() -> None:
         print("Sin implementar aún.")
 
     resultado_invalido = parsear_respuesta(RESPUESTA_JSON_INVALIDA)
-    print(f"  JSON inválido → None: {resultado_invalido is None}")
+    print(f"  JSON invalido -> None: {resultado_invalido is None}")
 
     print("\n=== Ejercicio 3: primera_valida ===")
     respuestas = [

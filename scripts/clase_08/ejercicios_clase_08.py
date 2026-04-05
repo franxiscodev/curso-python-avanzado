@@ -20,7 +20,8 @@ from typing import Protocol, runtime_checkable
 # Define el Protocol `Notificador` (decorado con @runtime_checkable) que declare:
 #   - método `enviar(self, mensaje: str) -> bool`
 #     (retorna True si el envío fue exitoso, False si no)
-# Pista: repasa "typing.Protocol — contratos sin herencia" en 01_conceptos.md
+# Pista: repasa la seccion 2 "typing.Protocol — contratos sin herencia" en 01_conceptos.md
+#        y el script scripts/clase_08/conceptos/01_protocol_basico.py
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +33,8 @@ from typing import Protocol, runtime_checkable
 #   - `NotificadorEmail`: su método `enviar` imprime "Email: {mensaje}" y retorna True
 #   - `NotificadorSMS`: su método `enviar` imprime "SMS: {mensaje}" y retorna True
 # Ninguna de las dos hereda de Notificador — deben satisfacerlo por duck typing.
-# Pista: repasa "Implementar un Protocol" en 01_conceptos.md
+# Pista: repasa la seccion 2 "Implementar un Protocol" en 01_conceptos.md
+#        y el script scripts/clase_08/conceptos/01_protocol_basico.py
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +47,8 @@ from typing import Protocol, runtime_checkable
 #   - Llama a notificador.enviar(mensaje)
 #   - Retorna True si el envío fue exitoso, False si no
 # La función funciona con CUALQUIER objeto que implemente Notificador.
-# Pista: repasa "Función que usa el Protocol" en 01_conceptos.md
+# Pista: repasa la seccion 2 "Funcion que usa el Protocol" en 01_conceptos.md
+#        y el script scripts/clase_08/conceptos/01_protocol_basico.py
 def notificar_usuario(notificador, mensaje: str) -> bool:
     pass  # ← reemplazar con tu implementación
 
@@ -62,7 +65,8 @@ def notificar_usuario(notificador, mensaje: str) -> bool:
 #       si temp > 35, envía "¡Alerta! {ciudad}: {temp}°C" y retorna True
 #       si no, retorna False sin enviar nada
 # El notificador se inyecta, no se instancia dentro de la clase.
-# Pista: repasa "Inyección de dependencias por constructor" en 01_conceptos.md
+# Pista: repasa la seccion 3 "Inyeccion de dependencias por constructor" en 01_conceptos.md
+#        y el script scripts/clase_08/conceptos/02_inyeccion_dependencias.py
 class ServicioAlertas:
     def __init__(self, notificador) -> None:
         pass  # ← reemplazar con tu implementación
@@ -82,7 +86,8 @@ class ServicioAlertas:
 #   - Si canal == "sms":   crea NotificadorSMS y lo inyecta en ServicioAlertas
 #   - Si canal no es conocido: lanza ValueError(f"Canal desconocido: {canal}")
 #   - Retorna la instancia de ServicioAlertas configurada
-# Pista: repasa "Factory como punto de composición" en 01_conceptos.md
+# Pista: repasa la seccion 3 "Factory como punto de composicion" en 01_conceptos.md
+#        y el script scripts/clase_08/conceptos/02_inyeccion_dependencias.py
 def crear_servicio_alertas(canal: str) -> ServicioAlertas:
     pass  # ← reemplazar con tu implementación
 
@@ -113,8 +118,8 @@ def demo() -> None:
         servicio = ServicioAlertas(NotificadorEmail())  # type: ignore[name-defined]
         enviado = servicio.alerta_temperatura("Valencia", 38.0)
         no_enviado = servicio.alerta_temperatura("Valencia", 25.0)
-        print(f"  38°C → alerta enviada: {enviado}")
-        print(f"  25°C → alerta enviada: {no_enviado}")
+        print(f"  38°C -> alerta enviada: {enviado}")
+        print(f"  25°C -> alerta enviada: {no_enviado}")
     except (NameError, TypeError):
         print("  Sin implementar aún.")
 
@@ -128,8 +133,8 @@ def demo() -> None:
         try:
             crear_servicio_alertas("fax")
         except ValueError as e:
-            print(f"  Canal inválido capturado: {e}")
-    except (NameError, TypeError):
+            print(f"  Canal invalido capturado: {e}")
+    except (NameError, TypeError, AttributeError):
         print("  Sin implementar aún.")
 
 

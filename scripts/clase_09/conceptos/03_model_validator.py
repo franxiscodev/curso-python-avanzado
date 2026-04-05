@@ -1,81 +1,62 @@
-"""Concepto 03 — @model_validator: validacion entre campos y valores derivados.
+"""Pydantic V2 — @model_validator: validación entre múltiples campos.
 
-Cuando la validacion requiere ver MULTIPLES campos a la vez,
-o calcular un valor a partir de otros, @model_validator(mode='after')
-tiene acceso al modelo completo ya construido.
+Demuestra cómo validar invariantes que involucran la relación entre
+dos o más campos del modelo. @field_validator solo ve un campo a la vez;
+@model_validator tiene acceso a todos los campos ya validados.
+
+mode="after" significa que se ejecuta después de que Pydantic haya
+validado y convertido cada campo individualmente.
+
+Conceptos que ilustra:
+- @model_validator(mode="after") — recibe self con todos los campos listos
+- Invariante del modelo: la relación fin > inicio siempre se garantiza
+- Orden de ejecución: field_validators primero, model_validator al final
+- Si un field_validator falla, el model_validator no se ejecuta
 
 Ejecutar:
-    # Windows (PowerShell)
-    uv run scripts/clase_09/conceptos/03_model_validator.py
-
-    # Linux
-    uv run scripts/clase_09/conceptos/03_model_validator.py
+    uv run python scripts/clase_09/conceptos/03_model_validator.py
 """
 
-from datetime import date
+from loguru import logger
+from pydantic import BaseModel, ValidationError, model_validator
 
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+logger.info("--- @model_validator: invariante entre campos ---")
 
 
-class Reserva(BaseModel):
-    hotel: str
-    fecha_entrada: date
-    fecha_salida: date
-    huespedes: int = Field(ge=1, le=10)
-    noches: int = 0  # se calcula automaticamente
+class RangoFechas(BaseModel):
+    # Fechas en formato AAAAMMDD como entero (simplificado para evitar imports de datetime).
+    # La regla de negocio: fin debe ser posterior a inicio. Ningún field_validator
+    # puede verificar esto porque cada uno solo ve su propio campo.
+    inicio: int
+    fin: int
 
-    @field_validator("hotel")
-    @classmethod
-    def hotel_no_vacio(cls, v: str) -> str:
-        return v.strip()
-
+    # mode="after": se ejecuta después de que Pydantic validó inicio y fin por separado.
+    # self ya tiene los valores convertidos a int — es seguro compararlos.
     @model_validator(mode="after")
-    def validar_fechas_y_calcular_noches(self) -> "Reserva":
-        """Valida que fecha_salida > fecha_entrada y calcula noches.
+    def verificar_rango_logico(self) -> "RangoFechas":
+        print(f"  Validando rango: inicio={self.inicio}, fin={self.fin}")
 
-        mode='after': tiene acceso a todos los campos ya validados.
-        Se ejecuta DESPUES de los field_validators.
-        """
-        if self.fecha_salida <= self.fecha_entrada:
+        if self.fin <= self.inicio:
+            # Esta es la única forma de validar una relación entre campos:
+            # el model_validator tiene visión completa del objeto.
             raise ValueError(
-                "fecha_salida debe ser posterior a fecha_entrada"
+                "La fecha 'fin' debe ser estrictamente posterior a la fecha 'inicio'"
             )
-        self.noches = (self.fecha_salida - self.fecha_entrada).days
+
+        # Siempre devolver self — permite modificar campos derivados si fuera necesario.
         return self
 
 
-# --- Uso correcto ---
-print("=== Reserva valida ===")
-reserva = Reserva(
-    hotel="Hotel Valencia",
-    fecha_entrada=date(2024, 6, 15),
-    fecha_salida=date(2024, 6, 18),
-    huespedes=2,
-)
-print(f"Hotel:    {reserva.hotel}")
-print(f"Entrada:  {reserva.fecha_entrada}")
-print(f"Salida:   {reserva.fecha_salida}")
-print(f"Noches:   {reserva.noches}  <- calculado automaticamente")
-print(f"Dict:     {reserva.model_dump()}")
-
-# --- Fallo: fechas invertidas ---
-print()
-print("=== Fechas invertidas (error) ===")
+# CASO A: Rango con sentido cronológico — el model_validator lo deja pasar
 try:
-    Reserva(
-        hotel="Hotel Test",
-        fecha_entrada=date(2024, 6, 18),
-        fecha_salida=date(2024, 6, 15),
-        huespedes=1,
-    )
+    r1 = RangoFechas(inicio=20240101, fin=20241231)
+    logger.success(f"Rango valido creado: {r1}")
 except ValidationError as e:
-    for error in e.errors():
-        print(f"  ValidationError: {error['msg']}")
+    logger.error(e)
 
-# --- Analogia con CommuteResult ---
-print()
-print("=== Mismo patron en PyCommute ===")
-print("CommuteResult.set_best_route() es un model_validator(mode='after'):")
-print("  - recibe routes ya validados como list[RouteData]")
-print("  - calcula best_route = min(routes, key=lambda r: r.duration_min)")
-print("  - el llamador no necesita calcularlo — siempre esta disponible")
+# CASO B: Fin anterior a inicio — la regla cross-field detecta la incoherencia
+print("\n--- Intento con rango invertido ---")
+try:
+    RangoFechas(inicio=20241231, fin=20240101)  # fin < inicio → inválido
+except ValidationError as e:
+    print(f"\n--- ValidationError ---\n{e}")

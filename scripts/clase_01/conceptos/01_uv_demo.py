@@ -1,17 +1,25 @@
-"""Demo UV — Clase 1, Concepto 1.
+"""
+UV — Entorno aislado y reproducible
+=====================================
+Demuestra cómo verificar que el intérprete activo pertenece a un
+entorno virtual creado por uv y no al Python del sistema.
 
-Muestra que UV instaló las dependencias correctamente.
+Conceptos que ilustra:
+- sys.prefix vs sys.base_prefix: el primero apunta al entorno activo;
+  el segundo, al Python base del sistema. Si difieren, hay aislamiento.
 
-Comandos que UV ejecuta por ti (no se pueden correr desde Python):
-    uv init pycommute        # crea proyecto con pyproject.toml
-    uv add httpx             # añade dependencia + actualiza uv.lock
-    uv run python script.py  # ejecuta en el entorno gestionado por UV
-
-Ejecuta este script con:
-    uv run scripts/clase_01/conceptos/01_uv_demo.py
+Ejecutar:
+    uv run python scripts/clase_01/conceptos/01_uv_demo.py
 """
 
-import httpx
+import sys
 
-print(f"httpx version: {httpx.__version__}")
-print("Si ves esto, UV instaló httpx correctamente.")
+
+def verify_isolation():
+    is_isolated = sys.prefix != sys.base_prefix
+    print(f"¿Entorno aislado?: {is_isolated}")
+    print(f"Ruta activa: {sys.prefix}")
+
+
+if __name__ == "__main__":
+    verify_isolation()

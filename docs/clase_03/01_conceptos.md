@@ -1,339 +1,296 @@
-# Clase 3 — Resiliencia Profesional: Loguru, Pydantic-Settings y Tenacity
+# Clase 03 — Resiliencia Profesional: Loguru, Pydantic-Settings y Tenacity
 
-## 1. Loguru — logging estructurado
+---
 
-El módulo estándar `logging` de Python cumple su función, pero su configuración es verbosa y propensa a errores. **Loguru** ofrece una API mínima con salida estructurada lista desde el primer uso.
+## 1. ¿Por qué observabilidad y resiliencia?
 
-### Instalación
+Un servicio que funciona en local puede fallar de formas silenciosas en producción:
+una API key faltante que retorna `None`, un timeout de red que no se reintenta, un
+error que el operador nunca ve porque se perdió entre `print()` genéricos.
 
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv add loguru
-```
+Esta clase introduce tres herramientas que atacan cada uno de esos puntos:
 
-### Uso básico
+- **Loguru**: reemplaza `print()` y el módulo estándar `logging` con output
+  estructurado, filtrable y orientado a múltiples destinos.
+- **Pydantic-Settings**: lee y valida la configuración al arrancar — si falta una
+  variable de entorno requerida, el servicio no arranca y el error es inmediato.
+- **Tenacity**: añade reintentos automáticos ante fallos de red transitorios,
+  sin código de bucle manual.
+
+Juntas forman el escudo de cualquier servicio que llama a APIs externas.
+
+---
+
+## 2. Loguru — niveles y sinks múltiples
+
+### Cómo funciona loguru
+
+Loguru tiene un único logger global. Por defecto escribe a `stderr` sin filtro.
+En producción, lo habitual es reemplazar ese comportamiento con dos destinos:
+uno para el operador (solo mensajes importantes) y otro para auditoría (todo).
 
 ```python
+import sys
 from loguru import logger
 
-logger.info("Servicio iniciado")
-logger.warning("Cuota al 80%")
-logger.error("No se pudo conectar al servidor")
+logger.remove()                                          # elimina el sink por defecto
+logger.add(sys.stderr, level="INFO", colorize=True)     # operadores: INFO+
+logger.add("auditoria.log", level="DEBUG", rotation="1 MB")  # registro completo
 ```
 
-### Niveles disponibles (de menor a mayor severidad)
+`logger.remove()` sin argumentos elimina todos los sinks registrados.
+`logger.add()` puede recibir un stream, una ruta de archivo, o cualquier callable.
+El parámetro `rotation="1 MB"` rota el archivo cuando supera 1 MB — sin código
+adicional de gestión de archivos.
 
-| Nivel       | Uso típico                                              |
-|-------------|----------------------------------------------------------|
-| `TRACE`     | Diagnóstico muy granular, solo en desarrollo local      |
-| `DEBUG`     | Valores intermedios útiles para depurar                 |
-| `INFO`      | Eventos normales del flujo principal                    |
-| `SUCCESS`   | Operación completada con éxito (exclusivo de Loguru)    |
-| `WARNING`   | Situación inesperada pero recuperable                   |
-| `ERROR`     | Fallo en una operación específica                       |
-| `CRITICAL`  | Fallo que impide continuar la ejecución                 |
+### Niveles de log
 
-### Por qué `logger.info("msg {key}", key=val)` en lugar de f-strings
+| Nivel      | Cuándo usarlo                                            |
+|------------|----------------------------------------------------------|
+| `DEBUG`    | Estado interno durante desarrollo — nunca en consola de producción |
+| `INFO`     | Eventos normales del flujo — lo que el operador debe ver |
+| `WARNING`  | Situación inesperada pero recuperable                   |
+| `ERROR`    | Fallo en una operación específica                       |
+| `CRITICAL` | Fallo que impide continuar la ejecución                 |
 
-Loguru soporta *lazy interpolation*: los valores no se evalúan si el nivel está filtrado. Con f-strings el valor siempre se calcula, aunque el mensaje nunca se escriba.
-
-```python
-# Malo — el objeto se serializa aunque el nivel esté desactivado
-logger.debug(f"Respuesta completa: {response.json()}")
-
-# Correcto — la serialización solo ocurre si DEBUG está activo
-logger.debug("Respuesta completa: {payload}", payload=response.json())
-```
-
-Además, la interpolación con claves nombradas facilita la búsqueda posterior en logs estructurados (JSON, Elastic, etc.).
-
-### Ejemplo completo
-
-```python
-from loguru import logger
-
-def fetch_sensor_data(sensor_id: str) -> dict:
-    logger.info("Consultando sensor {sensor_id}", sensor_id=sensor_id)
-    # ... lógica de consulta ...
-    data = {"temperature": 22.5, "humidity": 60}
-    logger.success("Datos obtenidos para sensor {sensor_id}", sensor_id=sensor_id)
-    return data
-```
-
-▶ **Ejecuta el ejemplo completo:**
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv run scripts/clase_03/conceptos/01_loguru_basico.py
-```
+La regla práctica: el sink de consola para el operador va en `"INFO"`. El sink de
+archivo para el equipo técnico va en `"DEBUG"`. Un mismo mensaje puede llegar a
+ambos o solo a uno según el nivel configurado en cada sink.
 
 ---
 
-## 2. Loguru vs print vs logging estándar
-
-### Tabla comparativa
-
-| Característica             | `print()`       | `logging` estándar          | `loguru`                        |
-|----------------------------|-----------------|-----------------------------|---------------------------------|
-| Configuración inicial      | Ninguna         | Verbosa (handlers, formatters) | Cero — funciona al importar  |
-| Niveles                    | No              | Sí                          | Sí (+ `SUCCESS` y `TRACE`)     |
-| Timestamps                 | Manual          | Configurable                | Automáticos                     |
-| Nombre del módulo origen   | Manual          | Configurable                | Automático                      |
-| Colores en terminal        | Manual (ANSI)   | No por defecto              | Automáticos                     |
-| Rotación de archivos       | No              | `RotatingFileHandler`       | `logger.add("app.log", rotation="10 MB")` |
-| Lazy interpolation         | No              | Sí (`%s` style)             | Sí (`{key}` style)              |
-| Excepciones con traceback  | Manual          | `logger.exception()`        | `logger.exception()` mejorado  |
-| Integración con `sink`     | No              | Handlers                    | Cualquier callable o archivo   |
-
-### Cuándo Loguru gana
-
-- Proyectos nuevos donde no existe infraestructura de logging previa
-- Scripts y servicios donde la configuración rápida es prioritaria
-- Equipos pequeños que prefieren convención sobre configuración
-
-### Cuándo el `logging` estándar es necesario
-
-- Librerías publicadas en PyPI — las librerías **nunca** deben imponer Loguru a quien las consume; el `logging` estándar permite que el usuario final configure el output
-- Sistemas legados con handlers ya configurados que no se pueden migrar
-- Entornos donde la política de la organización exige el módulo estándar
-
-```python
-# Patrón correcto en una librería reutilizable
-import logging
-
-logger = logging.getLogger(__name__)  # el usuario decide cómo manejarlo
-
-def process(data: list) -> list:
-    logger.debug("Procesando %d elementos", len(data))
-    return data
-```
-
-▶ **Ejecuta el ejemplo completo:**
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv run scripts/clase_03/conceptos/02_loguru_formato.py
-```
+▶ Ejecuta el ejemplo:
+  uv run python scripts/clase_03/conceptos/01_loguru_basico.py
 
 ---
 
-## 3. Pydantic-Settings — configuración validada
+### Análisis de 01_loguru_basico.py
 
-`pydantic-settings` extiende Pydantic para leer variables de entorno (y archivos `.env`) y validarlas como campos tipados. El resultado es un objeto de configuración que garantiza tipos correctos desde el arranque.
+El script configura dos sinks y llama a `procesar_datos()` con tres niveles distintos.
 
-### Instalación
+**Por qué `logger.remove()` antes de `logger.add()`:**
+Sin `remove()`, el sink por defecto sigue activo. Si después se añade otro hacia
+`sys.stderr`, el mismo mensaje aparecería dos veces. Eliminar primero garantiza
+que solo hay los sinks que el código define explícitamente.
 
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv add pydantic-settings
-```
+**Por qué el DEBUG no aparece en consola:**
+El sink de `sys.stderr` tiene `level="INFO"`. El mensaje `logger.debug(...)` tiene
+severidad menor — el sink lo descarta. Sí llega al archivo porque su nivel es
+`"DEBUG"`. Dos sinks, dos contratos de filtrado distintos.
 
-### Estructura básica
-
-```python
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-class AppSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-    )
-
-    app_name: str = "MyApp"
-    debug: bool = False
-    api_key: str                 # sin default → campo requerido
-```
-
-### Cómo lee los valores
-
-1. Variables de entorno del sistema operativo (mayor precedencia)
-2. Archivo `.env` indicado en `SettingsConfigDict`
-3. Valores por defecto definidos en la clase
-
-```python
-# .env
-APP_NAME=ProductionService
-DEBUG=false
-API_KEY=sk-abc123
-```
-
-```python
-settings = AppSettings()
-print(settings.app_name)   # "ProductionService"
-print(settings.debug)      # False  ← str "false" convertido a bool automáticamente
-print(settings.api_key)    # "sk-abc123"
-```
-
-### Campos opcionales con defaults
-
-```python
-class AppSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env")
-
-    app_name: str = "DefaultApp"
-    debug: bool = False
-    max_retries: int = 3
-    api_key: str                 # requerido — sin default
-    base_url: str = "https://api.example.com"
-```
-
-### Patrón de uso: instancia única
-
-```python
-# config.py
-from functools import lru_cache
-
-@lru_cache(maxsize=1)
-def get_settings() -> AppSettings:
-    return AppSettings()
-```
-
-`lru_cache` garantiza que `.env` se lee una sola vez durante toda la ejecución.
-
-▶ **Ejecuta el ejemplo completo:**
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv run scripts/clase_03/conceptos/03_pydantic_settings.py
-```
+**Qué ocurre con `rotation="1 MB"`:**
+Cuando `sistema_auditoria.log` alcanza 1 MB, loguru lo renombra automáticamente
+con timestamp y crea uno nuevo. El archivo siempre existe y nunca crece sin límite.
 
 ---
 
-## 4. El patrón fail-fast
+## 3. Loguru — evaluación perezosa y contexto con bind()
 
-### Por qué fallar al arrancar es mejor que fallar en runtime
+### Evaluación perezosa: por qué importa en logs de debug
 
-Un servicio que arranca sin configuración válida fallará eventualmente — pero en el peor momento: cuando ya está en producción y procesando peticiones reales. El patrón **fail-fast** exige que cualquier error de configuración se detecte en el momento del inicio, no durante la ejecución.
-
-```
-Fail-fast:   arranque → ValidationError → proceso termina → el operador lo corrige
-Sin fail-fast: arranque → OK → 3 horas después → None silencioso → datos corruptos
-```
-
-### `os.getenv()` vs Pydantic-Settings
+El problema con f-strings en logs:
 
 ```python
-# Sin fail-fast — os.getenv()
+def generar_reporte_pesado() -> str:
+    # operación costosa de CPU o I/O
+    return "Reporte PDF Generado"
+
+# Con f-string: la función se ejecuta ANTES de que loguru filtre el nivel
+logger.debug(f"Datos: {generar_reporte_pesado()}")  # la función corre siempre
+
+# Con lambda: la función solo se ejecuta si DEBUG está activo
+logger.debug("Datos: {}", lambda: generar_reporte_pesado())
+```
+
+Si el sink está en `WARNING`, el mensaje `DEBUG` se descartará. Con f-string,
+`generar_reporte_pesado()` ya corrió — trabajo en vano. Con lambda, loguru
+evalúa el valor solo cuando sabe que el mensaje va a emitirse.
+
+### Contexto con bind()
+
+`logger.bind()` devuelve un sub-logger con campos extra fijos. Cada mensaje
+emitido por ese sub-logger incluye esos campos automáticamente:
+
+```python
+user_logger = logger.bind(user_id="usr_99X", ip="192.168.1.5")
+user_logger.warning("Intento de login fallido.")   # incluye user_id e ip
+user_logger.warning("Contraseña restablecida.")    # incluye user_id e ip
+```
+
+El logger original no se modifica. `bind()` devuelve una copia con el contexto
+añadido — útil para rastrear todos los eventos de un mismo usuario o request.
+
+---
+
+▶ Ejecuta el ejemplo:
+  uv run python scripts/clase_03/conceptos/02_loguru_formato.py
+
+---
+
+### Análisis de 02_loguru_formato.py
+
+**Por qué `generar_reporte_pesado()` nunca se ejecuta:**
+El script configura el sink en `"WARNING"`. El nivel `DEBUG` está por debajo —
+el mensaje se descarta. Al usar `lambda: generar_reporte_pesado()`, loguru no
+invoca la lambda porque sabe que el mensaje no va a emitirse. La función nunca corre.
+El `print("--- ⚠️ ATENCIÓN")` dentro nunca aparece en el output.
+
+**Qué se ve en el output de bind():**
+Las dos líneas de `user_logger.warning(...)` muestran el mensaje con los campos
+`user_id` y `ip` añadidos. Cambiar el nivel del sink a `"DEBUG"` mostraría también
+el resultado de la lazy eval — útil para verificar el comportamiento en local.
+
+**Por qué `# Incorrecto` está comentado:**
+La línea `logger.debug(f"Datos: {generar_reporte_pesado()}")` está comentada
+intencionalmente. Si se descomenta, la función correría — y el `print` de advertencia
+aparecería — aunque el mensaje de log nunca llegue al sink. El contraste con la
+línea de lambda es el punto central del script.
+
+---
+
+## 4. Pydantic-Settings — configuración tipada y fail-fast
+
+### El problema del None silencioso
+
+```python
 import os
 
-api_key = os.getenv("API_KEY")           # devuelve None sin avisar
+api_key = os.getenv("OPENWEATHER_API_KEY")   # None si no está en el entorno
 response = client.get(url, headers={"Authorization": f"Bearer {api_key}"})
-# Bearer None — la API falla con 401; el error parece un problema de red
+# El servidor recibe: "Bearer None" — responde 401
+# El error aparece al hacer la llamada, no al arrancar
 ```
+
+`os.getenv()` devuelve `None` sin ninguna advertencia. El error se descubre
+tarde, cuando el servicio ya está en producción procesando peticiones reales.
+
+### Pydantic-Settings como solución
 
 ```python
-# Con fail-fast — Pydantic-Settings
 from pydantic_settings import BaseSettings
 
-class Settings(BaseSettings):
-    api_key: str                          # campo requerido
+class AppConfig(BaseSettings):
+    puerto: int          # lee PUERTO del entorno, convierte a int
+    debug: bool          # lee DEBUG del entorno, convierte a bool
+    api_key: str         # requerido — sin default, sin None posible
 
-settings = Settings()                     # ValidationError aquí si falta API_KEY
-# Si llega a esta línea, api_key es un str válido — garantizado
-response = client.get(url, headers={"Authorization": f"Bearer {settings.api_key}"})
+config = AppConfig()     # ValidationError aquí si falta api_key
 ```
 
-### Ventajas concretas
+Al instanciar `AppConfig()`, pydantic-settings:
+1. Lee las variables de entorno correspondientes
+2. Convierte los strings del entorno al tipo declarado (`"8080"` → `8080`)
+3. Lanza `ValidationError` inmediatamente si un campo requerido no existe
 
-| Aspecto              | `os.getenv()`                    | Pydantic-Settings                        |
-|----------------------|----------------------------------|------------------------------------------|
-| Key faltante         | `None` sin aviso                 | `ValidationError` inmediato              |
-| Tipo incorrecto      | Siempre `str` o `None`           | Conversión automática + error si falla   |
-| Documentación        | Dispersa en el código            | Centralizada en la clase `Settings`      |
-| Testabilidad         | Mockear `os.environ`             | Pasar valores por constructor o env vars |
-| Detección del error  | En runtime, al usar el valor     | En startup, antes de procesar nada       |
-
-### Regla práctica
-
-Si una variable de entorno es necesaria para que el servicio funcione correctamente, debe ser un campo **requerido** (sin default) en `BaseSettings`. Si el servicio puede operar sin ella con un comportamiento diferente, usar un default explícito.
+El servicio no puede arrancar en estado inválido.
 
 ---
 
-## 5. Tenacity — `@retry` básico
+▶ Ejecuta el ejemplo:
+  uv run python scripts/clase_03/conceptos/03_pydantic_settings.py
 
-Las llamadas a sistemas externos (APIs HTTP, bases de datos, colas de mensajes) fallan ocasionalmente por razones transitorias: timeouts de red, sobrecarga momentánea del servidor, interrupciones de conexión. **Tenacity** implementa el patrón retry con control preciso sobre cuándo y cómo reintentar.
+---
 
-### Instalación
+### Análisis de 03_pydantic_settings.py
 
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv add tenacity
-```
+**Por qué `PUERTO="8080"` (string) se convierte a `int` sin código extra:**
+Pydantic lee el tipo declarado (`puerto: int`) y aplica coerción automática.
+`"8080"` se convierte a `8080`. `"True"` se convierte a `True`. No hay
+`int(os.getenv("PUERTO"))` manual — pydantic lo hace al instanciar.
 
-### Decorador básico
+**Por qué el script falla intencionalmente:**
+`API_KEY_SECRETA` no está en `os.environ`. Como el campo no tiene valor
+por defecto, pydantic lanza `ValidationError` con el mensaje:
+`api_key_secreta: Field required`. El `try/except` captura ese error y
+lo imprime como `[FAIL-FAST ACTIVO]`. El servidor no arranca.
+
+**La diferencia con os.getenv():**
+Con `os.getenv("API_KEY_SECRETA")` la función retornaría `None` silenciosamente.
+Con pydantic-settings el proceso termina con un mensaje de error claro, en el
+momento de arranque, antes de procesar ninguna petición real.
+
+---
+
+## 5. Tenacity — @retry declarativo
+
+### El problema del bucle manual
 
 ```python
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
-import httpx
+# Sin tenacity — frágil y verboso
+intentos = 0
+while intentos < 3:
+    try:
+        resultado = llamar_api(url)
+        break
+    except ConnectionError:
+        intentos += 1
+        time.sleep(2 ** intentos)
+if intentos == 3:
+    raise ConnectionError("API no disponible")
+```
+
+Este código mezcla la lógica de negocio con la lógica de retry. Si la función
+tiene múltiples puntos de fallo, el bucle se vuelve inmantenible.
+
+### Tenacity: declarar el comportamiento, no el bucle
+
+```python
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_fixed(1),
-    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
-    reraise=True,
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
 )
-def fetch_data(url: str) -> dict:
+def llamar_api(url: str) -> dict:
     response = httpx.get(url, timeout=5.0)
     response.raise_for_status()
     return response.json()
 ```
 
+`@retry` convierte la función en una que reintenta automáticamente.
+La función en sí no sabe que está siendo reintentada — escribe solo la
+lógica de una llamada. Tenacity gestiona el bucle, los tiempos y la
+propagación del error final.
+
 ### Parámetros principales
 
-| Parámetro                   | Propósito                                                   |
-|-----------------------------|-------------------------------------------------------------|
-| `stop_after_attempt(n)`     | Máximo `n` intentos antes de propagar la excepción          |
-| `wait_fixed(seconds)`       | Espera fija entre intentos                                  |
-| `retry_if_exception_type()` | Solo reintenta si la excepción es del tipo indicado         |
-| `reraise=True`              | Propaga la excepción original al agotar los intentos        |
+| Parámetro | Comportamiento |
+|---|---|
+| `stop_after_attempt(n)` | Máximo `n` intentos totales |
+| `wait_fixed(s)` | Espera fija de `s` segundos entre intentos |
+| `wait_exponential(min, max)` | Espera que dobla cada intento, con mínimo y tope |
+| `retry_if_exception_type(T)` | Solo reintenta si la excepción es del tipo `T` |
+| `reraise=True` | Propaga la excepción original al agotar los intentos |
 
-### Por qué limitar las condiciones de retry a errores transitorios
+**Por qué `wait_exponential` en lugar de `wait_fixed`:**
+Un servidor bajo carga que falla no se recupera si recibe el mismo volumen
+de peticiones inmediatamente. La espera exponencial da tiempo al servidor
+para estabilizarse, y reduce la presión acumulada de múltiples clientes
+reintentando a la vez.
 
-Esta es la regla más importante al usar Tenacity. Reintentar ante cualquier excepción puede ocultar bugs reales o empeorar el problema.
+---
 
-**Errores transitorios** (sí reintentar):
-- `httpx.ConnectError` — la red falló momentáneamente
-- `httpx.TimeoutException` — el servidor tardó más de lo esperado
-- `ConnectionResetError` — la conexión se interrumpió
+▶ Ejecuta el ejemplo:
+  uv run python scripts/clase_03/conceptos/04_tenacity_retry.py
 
-**Errores deterministas** (no reintentar — siempre fallarán igual):
-- `httpx.HTTPStatusError` con status 400 — datos de entrada incorrectos
-- `httpx.HTTPStatusError` con status 401 — API key inválida
-- `ValueError` — el JSON recibido no tiene el formato esperado
-- Cualquier excepción de lógica propia del programa
+---
 
-```python
-# Incorrecto — reintenta ante cualquier error, incluyendo 401 y bugs
-@retry(stop=stop_after_attempt(3))
-def fetch_sensor(sensor_id: str) -> dict: ...
+### Análisis de 04_tenacity_retry.py
 
-# Correcto — solo reintenta ante fallos de red y timeouts
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_fixed(2),
-    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
-    reraise=True,
-)
-def fetch_sensor(sensor_id: str) -> dict: ...
-```
+**Por qué `intentos_realizados` es una variable global:**
+El decorador `@retry` llama a `llamar_api_externa()` múltiples veces como
+llamadas independientes. La función necesita "recordar" cuántas veces fue
+invocada para simular el fallo en las primeras tres. Una variable global
+persiste entre llamadas del mismo proceso — en producción, este patrón
+se reemplaza por un estado externo real (el servidor que falla).
 
-### `wait_exponential` — variante para producción
+**Qué ocurre con los tiempos:**
+`wait_exponential(min=1, max=10)` hace que tenacity espere 1s entre el
+intento 1 y 2, 2s entre el 2 y 3, 4s entre el 3 y 4. El script real
+tardará ~7 segundos en completarse. Es el coste de reintentar ante fallos
+transitorios — visible y controlado.
 
-En producción se prefiere espera exponencial para no saturar un servidor que ya está bajo carga:
-
-```python
-from tenacity import wait_exponential
-
-@retry(
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=1, max=30),  # 1s, 2s, 4s, 8s, 16s (cap 30s)
-    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
-    reraise=True,
-)
-def fetch_data_production(url: str) -> dict: ...
-```
-
-`wait_fixed` es adecuado para desarrollo y tests; `wait_exponential` es el estándar en servicios productivos.
-
-▶ **Ejecuta el ejemplo completo:**
-```bash
-# Windows (PowerShell) y Linux (idéntico)
-uv run scripts/clase_03/conceptos/04_tenacity_retry.py
-```
+**Qué pasa si todos los intentos fallan:**
+Si `intentos_realizados` nunca alcanzara 4, el cuarto intento también fallaría.
+Tenacity agotan los 4 intentos y propaga la última `ConnectionError` al bloque
+`try/except` externo, que imprime el mensaje de fallo definitivo.

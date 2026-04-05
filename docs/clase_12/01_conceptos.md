@@ -1,21 +1,6 @@
 # Clase 12 — API REST Profesional con FastAPI
 
-## ¿Qué es una API REST?
-
-Una API REST (Representational State Transfer) expone funcionalidad
-a través de HTTP. Cualquier cliente — web, móvil, otro servicio —
-puede consumirla sin conocer el lenguaje en que está escrita.
-
-Los conceptos clave:
-
-- **Endpoint:** URL que responde a un método HTTP (`GET`, `POST`, `PUT`, `DELETE`)
-- **Request body:** datos enviados por el cliente (JSON)
-- **Response:** datos devueltos por el servidor (JSON)
-- **Status code:** número que indica éxito (2xx), error cliente (4xx), error servidor (5xx)
-
----
-
-## FastAPI — framework ASGI
+## 1. FastAPI — framework ASGI
 
 FastAPI es un framework web async-first para Python.
 
@@ -33,97 +18,140 @@ FastAPI es un framework web async-first para Python.
 - **Starlette** — routing y middleware
 - **Pydantic** — validación y serialización
 
----
-
-## APIRouter — organizar endpoints
-
-En lugar de definir todos los endpoints en un solo archivo,
-`APIRouter` permite dividirlos por dominio:
+Los endpoints se definen con decoradores sobre el objeto `app`:
 
 ```python
-# routers/productos.py
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/productos")
-
-@router.get("/")           # → GET /productos/
-def listar():
-    return [{"id": 1, "nombre": "Widget"}]
-
-@router.get("/{id}")       # → GET /productos/42
-def obtener(id: int):
-    return {"id": id, "nombre": "Widget"}
-```
-
-```python
-# main.py
 from fastapi import FastAPI
-from routers import productos
 
 app = FastAPI()
-app.include_router(productos.router, tags=["productos"])
+
+@app.get("/salud")
+async def salud():
+    return {"estado": "ok"}
 ```
 
-Los `tags` agrupan endpoints en la documentación automática.
+La documentación interactiva está disponible en `/docs` (Swagger UI) y
+`/redoc` sin configuración adicional — FastAPI la genera del código.
+
+**Ejecutar una app FastAPI localmente:**
+
+FastAPI incluye un CLI de desarrollo a través del extra `[standard]`:
+
+```bash
+# desde curso/
+uv run fastapi dev scripts/clase_12/conceptos/01_fastapi_lifespan.py
+```
+
+`fastapi dev` activa hot-reload automáticamente — al guardar el archivo,
+el servidor se reinicia sin Ctrl+C. El servidor arranca en
+`http://localhost:8000` por defecto. Abre `/docs` para ver Swagger UI.
+
+**Por qué `--port`:**
+El puerto 8000 es el predeterminado. Si ya tienes un script corriendo,
+el segundo dará error de "address already in use". Con `--port` cada script
+ocupa un puerto diferente:
+
+```bash
+uv run fastapi dev scripts/clase_12/conceptos/01_fastapi_lifespan.py --port 8001
+uv run fastapi dev scripts/clase_12/conceptos/02_depends_pattern.py    --port 8002
+```
+
+**`fastapi[standard]` vs `fastapi` bare:**
+
+| Paquete | Incluye |
+|---------|---------|
+| `fastapi` | solo el framework (routers, Depends, Pydantic) |
+| `fastapi[standard]` | + `fastapi-cli` (comando `fastapi dev/run`) |
+| | + `uvicorn[standard]` (el servidor ASGI) |
+| | + `python-multipart` (form data) |
+
+El bare `fastapi` no instala el comando `fastapi` — por eso la primera vez
+da error hasta añadir `fastapi[standard]`.
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_12/conceptos/01_fastapi_basico.py`
+  `uv run fastapi dev scripts/clase_12/conceptos/01_fastapi_lifespan.py --port 8001`
+  Luego abre: `http://localhost:8001/docs`
 
 ---
 
-## Depends() — inyección de dependencias
+## 2. Lifespan — ciclo de vida y estado global
 
-`Depends()` le dice a FastAPI que ejecute una función antes de llamar
-al endpoint, e inyecte su resultado como parámetro:
+El hook `lifespan` separa startup de shutdown con un context manager:
 
 ```python
-from fastapi import Depends
+from contextlib import asynccontextmanager
+import httpx
+from fastapi import FastAPI
 
-def get_base_datos():
-    return {"conexion": "activa"}   # en real: conexión DB
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # STARTUP — antes de la primera petición
+    app.state.http_client = httpx.AsyncClient()
+    yield
+    # SHUTDOWN — al apagar el servidor (Ctrl+C o SIGTERM)
+    await app.state.http_client.aclose()
 
-@app.get("/items")
-def listar(db = Depends(get_base_datos)):
-    # db ya está resuelto por FastAPI
-    return db
+app = FastAPI(lifespan=lifespan)
 ```
 
-**FastAPI resuelve el grafo completo:**
+**Por qué importa:**
+- Recursos costosos (clientes HTTP, pools de DB, modelos ML) se crean una vez,
+  no por petición.
+- El shutdown está garantizado incluso si hay una excepción — no hay fugas de conexiones.
+- `app.state` es el almacén compartido entre peticiones — se accede via
+  `request.app.state` dentro de los endpoints.
 
 ```python
-def get_config():
-    return {"api_key": "abc123"}
-
-def get_cliente(cfg = Depends(get_config)):   # anidado
-    return ClienteExterno(cfg["api_key"])
-
-@app.get("/datos")
-def obtener(cliente = Depends(get_cliente)):  # FastAPI resuelve la cadena
-    return cliente.fetch()
+@app.get("/health")
+async def health_check(request: Request):
+    client = request.app.state.http_client  # el mismo cliente para todas las peticiones
+    return {"status": "ok", "client_active": not client.is_closed}
 ```
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_12/conceptos/02_depends_pattern.py`
+  `uv run uvicorn scripts.clase_12.conceptos.01_fastapi_lifespan:app --reload`
 
 ---
 
-## lru_cache con Depends — patrón singleton
+## 3. Depends() — inyección de dependencias
 
-Sin cache, `Depends()` crea una nueva instancia en cada request.
-Con `@lru_cache`, la primera llamada crea la instancia y las siguientes
-devuelven la misma:
+`Depends()` le dice a FastAPI que ejecute una función antes de llamar al endpoint
+e inyecte su resultado como parámetro:
+
+```python
+from typing import Annotated
+from fastapi import Depends, FastAPI
+
+class CommuteService:
+    def calculate_eta(self, origin: str, dest: str) -> int:
+        return 42
+
+def get_commute_service() -> CommuteService:
+    return CommuteService()
+
+# Annotated combina el tipo y el metadato de inyección en un alias reutilizable
+ServiceDep = Annotated[CommuteService, Depends(get_commute_service)]
+
+@app.get("/api/v1/eta")
+def get_eta(origin: str, destination: str, service: ServiceDep):
+    eta = service.calculate_eta(origin, destination)
+    return {"origin": origin, "destination": destination, "eta_minutes": eta}
+```
+
+**Beneficios sobre instanciar directamente en el endpoint:**
+- La fábrica puede recibir sus propias dependencias (anidado)
+- Intercambiable en tests via `dependency_overrides` sin tocar el endpoint
+- Si la fábrica usa `yield`, FastAPI gestiona el cleanup automáticamente
+
+**Patrón singleton con `@lru_cache`:**
 
 ```python
 from functools import lru_cache
 
 @lru_cache
-def get_servicio() -> ServicioPesado:
-    print("Creando servicio...")  # solo se ejecuta una vez
-    return ServicioPesado()
-
-@app.get("/items")
-def listar(svc = Depends(get_servicio)):
-    return svc.procesar()
+def get_commute_service() -> CommuteService:
+    # Solo se ejecuta una vez — las siguientes peticiones reciben la misma instancia
+    return CommuteService()
 ```
 
 **En tests — `dependency_overrides`:**
@@ -131,113 +159,112 @@ def listar(svc = Depends(get_servicio)):
 ```python
 from unittest.mock import MagicMock
 
-def mock_servicio():
+def mock_service():
     svc = MagicMock()
-    svc.procesar.return_value = [{"id": 1}]
+    svc.calculate_eta.return_value = 10
     return svc
 
-app.dependency_overrides[get_servicio] = mock_servicio
-# Ahora todos los endpoints reciben el mock — sin patchear módulos
+app.dependency_overrides[get_commute_service] = mock_service
+# Todos los endpoints reciben el mock — sin patchear módulos
 ```
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_12/conceptos/02_depends_pattern.py`
+  `uv run uvicorn scripts.clase_12.conceptos.02_depends_pattern:app --reload`
 
 ---
 
-## Pydantic en FastAPI — validación automática
+## 4. Schemas Pydantic — contratos de entrada y salida
 
-FastAPI usa Pydantic para validar request bodies y serializar responses.
-
-**Request body:**
+FastAPI usa Pydantic V2 para validar automáticamente el cuerpo de las peticiones:
 
 ```python
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-class ProductoIn(BaseModel):
-    nombre: str = Field(min_length=1, examples=["Widget Pro"])
-    precio: float = Field(gt=0, examples=[9.99])
-    activo: bool = Field(default=True)
+class RoutingRequest(BaseModel):
+    origin: str = Field(..., min_length=3)
+    destination: str = Field(..., min_length=3)
+    transport_mode: str = Field(default="driving", pattern="^(driving|transit|walking)$")
 
-@app.post("/productos")
-def crear(producto: ProductoIn):
-    # producto ya está validado — si falla, FastAPI devuelve 422
-    return {"id": 1, **producto.model_dump()}
+    @model_validator(mode="after")
+    def check_different_locations(self) -> "RoutingRequest":
+        if self.origin.lower() == self.destination.lower():
+            raise ValueError("El origen y destino no pueden ser iguales.")
+        return self
 ```
 
-**Response model — filtrar campos internos:**
+Si el payload no cumple el contrato, FastAPI devuelve `422 Unprocessable Entity`
+con detalle de qué campo falló — sin código adicional.
+
+**Response model — filtrar la salida:**
 
 ```python
-class ProductoOut(BaseModel):
-    id: int
-    nombre: str
-    precio: float
-    # 'activo' no aparece — filtrado por response_model
+class RoutingResponse(BaseModel):
+    route_id: str
+    eta_mins: int
+    # Solo estos dos campos se serializan — datos internos no se exponen
 
-@app.get("/productos/{id}", response_model=ProductoOut)
-def obtener(id: int) -> ProductoOut:
-    return {"id": id, "nombre": "Widget", "precio": 9.99, "activo": False}
-    # FastAPI filtra 'activo' automaticamente
+@app.post("/route", response_model=RoutingResponse)
+def create_route(payload: RoutingRequest):
+    # Si llega aquí, payload está 100% validado
+    return RoutingResponse(route_id="R-999", eta_mins=120)
 ```
+
+**Capas de validación en orden:**
+1. `Field(...)` — tipo, longitud, patrón, rango numérico
+2. `model_validator` — lógica cruzada entre campos
+3. `response_model` — filtrado de campos en la salida
 
 ▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_12/conceptos/03_pydantic_schemas.py`
+  `uv run uvicorn scripts.clase_12.conceptos.03_pydantic_schemas:app --reload`
 
 ---
 
-## Lifespan — startup y shutdown
+## 5. Concurrencia estructurada en endpoints
 
-El lifespan permite ejecutar código al arrancar y al cerrar el servidor:
+`async def` en un endpoint FastAPI permite usar `await` dentro, pero las
+operaciones siguen siendo secuenciales a menos que uses concurrencia explícita.
+
+`anyio.create_task_group()` permite ejecutar varias corutinas en paralelo
+dentro de un endpoint:
 
 ```python
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-from fastapi import FastAPI
+import anyio
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # startup: inicializar recursos costosos
-    print("Servidor iniciando...")
-    yield
-    # shutdown: liberar recursos
-    print("Servidor cerrando...")
+async def fetch_weather(city: str, results: dict):
+    await anyio.sleep(1.0)  # simula I/O de red
+    results["weather"] = f"Soleado en {city}"
 
-app = FastAPI(lifespan=lifespan)
+async def fetch_route(origin: str, dest: str, results: dict):
+    await anyio.sleep(2.0)  # simula I/O de red
+    results["route"] = f"Ruta optima de {origin} a {dest}"
+
+@app.get("/dashboard")
+async def get_dashboard(origin: str = "Valencia", dest: str = "Madrid"):
+    results = {}
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(fetch_weather, origin, results)
+        tg.start_soon(fetch_route, origin, dest, results)
+
+    # Aqui ambas tareas han terminado — total ~2s, no 3s
+    return {"data": results}
 ```
 
-Usos comunes:
-- Conectar a base de datos al arrancar, cerrar conexión al parar
-- Cargar modelos ML en RAM al arrancar
-- Flush de logs pendientes al cerrar
+**Garantías de concurrencia estructurada:**
+- Si una tarea lanza excepción, la otra se cancela automáticamente
+- No hay tareas huérfanas — el grupo limpia al salir del bloque
+- El dict compartido es seguro porque anyio es single-threaded (no hay
+  condiciones de carrera en CPython)
+
+Aplicar cuando el endpoint necesita varias fuentes de datos independientes:
+weather + route, precio + disponibilidad, etc.
+
+▶ Ejecuta el ejemplo:
+  `uv run uvicorn scripts.clase_12.conceptos.04_async_endpoints:app --reload`
 
 ---
 
-## OpenAPI automático — /docs gratis
-
-FastAPI genera documentación interactiva a partir del código:
-
-```python
-@app.post(
-    "/productos",
-    response_model=ProductoOut,
-    summary="Crear un producto",
-    description="Crea un nuevo producto en el catálogo.",
-)
-def crear(producto: ProductoIn) -> ProductoOut:
-    ...
-```
-
-Accesible en:
-
-- **`/docs`** — Swagger UI interactivo (ejecutar requests desde el browser)
-- **`/redoc`** — ReDoc (más legible, menos interactivo)
-- **`/openapi.json`** — schema JSON para generar clientes automáticamente
-
-No hay que escribir documentación manualmente — sale del código.
-
----
-
-## Testing con TestClient
+## 6. Testing con TestClient
 
 `TestClient` ejecuta el servidor en memoria — no hace falta arrancarlo:
 
@@ -246,13 +273,10 @@ from fastapi.testclient import TestClient
 
 client = TestClient(app)
 
-def test_crear_producto():
-    response = client.post("/productos", json={
-        "nombre": "Widget Pro",
-        "precio": 9.99,
-    })
+def test_health():
+    response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["nombre"] == "Widget Pro"
+    assert response.json()["status"] == "ok"
 ```
 
 `TestClient` es sincrono aunque los endpoints sean `async`.
@@ -260,10 +284,14 @@ def test_crear_producto():
 **Combinado con `dependency_overrides`:**
 
 ```python
-app.dependency_overrides[get_servicio] = lambda: mock_servicio
+app.dependency_overrides[get_commute_service] = lambda: mock_service
 client = TestClient(app)
 # Los tests no hacen llamadas reales a servicios externos
 ```
 
-▶ Ejecuta el ejemplo:
-  `uv run scripts/clase_12/conceptos/04_async_endpoints.py`
+Ventaja frente a pruebas con `requests` contra un servidor real:
+- Sin puerto, sin proceso externo, sin estado entre tests
+- Más rápido y determinista
+- Los overrides se aplican por test — sin efectos colaterales
+
+▶ Referencia: `scripts/clase_12/ejercicios_clase_12.py` — Ejercicio 4
