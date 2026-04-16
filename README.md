@@ -126,7 +126,7 @@ CI/CD        GitHub Actions
 
 ```bash
 # Clonar el repo
-git clone https://github.com/TU_USER/pycommute-elite.git
+git clone https://github.com/franxiscodev/curso-python-avanzado.git
 cd pycommute-elite
 
 # Instalar dependencias
