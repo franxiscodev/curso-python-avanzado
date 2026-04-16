@@ -16,6 +16,8 @@ Ejecutar (desde curso/):
     uv run python scripts/clase_03/conceptos/02_loguru_formato.py
 """
 
+import sys
+
 from loguru import logger
 
 
@@ -27,13 +29,24 @@ def generar_reporte_pesado():
 # 1. EVALUACIÓN PEREZOSA (LAZY)
 # Cambia esto a "INFO" y verás que la función pesada NUNCA se ejecuta.
 logger.remove()
-logger.add(lambda msg: print(msg, end=""), level="WARNING")
+
+logger.add(
+    sys.stderr,
+    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}:{function}:{line}</cyan> | <magenta>{extra}</magenta> - <level>{message}</level>",
+    level="DEBUG",
+)
+
+# logger.add(sys.stderr, serialize=True) # JSON
+
+
+# logger.add(lambda msg: print(msg, end=""), level="WARNING")
 
 # Incorrecto: La función se ejecuta aunque el log esté en WARNING
 # logger.debug(f"Datos: {generar_reporte_pesado()}")
 
 # Correcto: La función no se ejecuta porque usamos lambdas
-logger.debug("Datos: {}", lambda: generar_reporte_pesado())
+# logger.debug("Datos: {}", lambda: generar_reporte_pesado())
+logger.opt(lazy=True).debug("Datos: {datos}", datos=lambda: generar_reporte_pesado())
 
 # 2. CONTEXTO INYECTADO (BIND)
 # Creamos un sub-logger para rastrear a un usuario específico
